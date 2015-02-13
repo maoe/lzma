@@ -1,0 +1,150 @@
+name: lzma
+version: 0.0.0
+synopsis: Compression and decompression in the xz format using liblzma
+-- description:
+homepage: https://github.com/maoe/lzma
+bug-reports: https://github.com/maoe/lzma/issues
+license: BSD3
+license-file: LICENSE
+author: Mitsutoshi Aoe
+maintainer: Mitsutoshi Aoe <maoe@foldr.in>
+copyright: Copyright (C) 2014-2015 Mitsutoshi Aoe
+category: Codec
+build-type: Simple
+cabal-version: >=1.10
+
+flag debug
+  default: False
+
+library
+  exposed-modules:
+    Codec.Compression.LZMA
+    Codec.Compression.LZMA.Internal
+    Codec.Compression.LZMA.Index
+    Codec.Compression.LZMA.Internal.C
+    Codec.Compression.LZMA.Internal.Stream
+    Codec.Compression.LZMA.Internal.Index
+  other-modules:
+    Codec.Compression.LZMA.Internal.Constants
+    Codec.Compression.LZMA.Internal.Stream.Monad
+  build-depends:
+      base >= 4.7 && < 4.8
+    , bytestring >= 0.10 && < 0.11
+    , exceptions >= 0.6 && < 0.8
+    , mtl >= 2.2 && < 2.3
+    , pipes >= 4.1 && < 4.2
+    , vector >= 0.10 && < 0.11
+  build-tools: c2hs >= 0.19.1
+  if os(darwin)
+    pkgconfig-depends: liblzma
+  else
+    extra-libraries: lzma
+  ghc-options: -Wall
+  if flag(debug)
+    cpp-options: -DDEBUG
+    build-depends:
+        pretty-show
+  hs-source-dirs: src
+  c-sources:
+    cbits/lzma.c
+  default-language: Haskell2010
+
+-- executable xz-seek-iteratee
+--   main-is: seek-iteratee.hs
+--   build-depends:
+--       base
+--     , bytestring
+--     , iteratee == 0.8.4.6
+--     , lzma
+--     , mtl
+--   hs-source-dirs: examples
+--   default-language: Haskell2010
+
+executable xz-seek-conduit
+  buildable: False
+  main-is: seek-conduit.hs
+  build-depends:
+      base
+    , bytestring
+    , conduit
+    , conduit-extra
+    , exceptions
+    , lzma
+    , mtl
+    , resourcet
+  hs-source-dirs: examples
+  default-language: Haskell2010
+
+executable xz-list
+  -- buildable: False
+  main-is: xz-list.hs
+  build-depends:
+      base
+    , bytestring
+    , lzma
+    , mtl
+  ghc-options: -Wall
+  hs-source-dirs: examples
+  default-language: Haskell2010
+
+executable xz-seek
+  -- buildable: False
+  main-is: xz-seek.hs
+  build-depends:
+      base
+    , bytestring
+    , lzma
+    , mtl
+    , pipes
+  ghc-options: -Wall
+  hs-source-dirs: examples
+  default-language: Haskell2010
+
+executable xz-cat
+  -- buildable: False
+  main-is: xz-cat.hs
+  build-depends:
+      base
+    , bytestring
+    , lzma
+    , pipes
+  ghc-options: -Wall
+  hs-source-dirs: examples
+  default-language: Haskell2010
+
+
+test-suite test-index
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: test-index.hs
+  build-depends:
+      base
+    , lzma
+    , tasty
+    , tasty-hunit
+    , tasty-th
+  default-language: Haskell2010
+
+test-suite test-block
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: test-block.hs
+  build-depends:
+      base
+    , lzma
+    , tasty
+    , tasty-hunit
+    , tasty-th
+    , vector
+  default-language: Haskell2010
+
+
+source-repository head
+  type: git
+  branch: develop
+  location: https://github.com/maoe/lzma.git
+
+source-repository this
+  type: git
+  tag: v0.9.0
+  location: https://github.com/maoe/lzma.git
