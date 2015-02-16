@@ -4,7 +4,7 @@ import System.IO
 import qualified Data.ByteString as S
 import qualified Pipes.Internal as P
 
-import Codec.Compression.LZMA
+import Codec.Compression.LZMA.Incremental
 
 main :: IO ()
 main = do

@@ -19,20 +19,22 @@ flag debug
 library
   exposed-modules:
     Codec.Compression.LZMA
+    Codec.Compression.LZMA.Incremental
     Codec.Compression.LZMA.Internal
-    Codec.Compression.LZMA.Index
     Codec.Compression.LZMA.Internal.C
+    Codec.Compression.LZMA.Internal.IndexDecoder
     Codec.Compression.LZMA.Internal.Stream
-    Codec.Compression.LZMA.Internal.Index
   other-modules:
     Codec.Compression.LZMA.Internal.Constants
     Codec.Compression.LZMA.Internal.Stream.Monad
+    Codec.Compression.LZMA.Internal.Types
   build-depends:
       base >= 4.7 && < 4.8
     , bytestring >= 0.10 && < 0.11
     , exceptions >= 0.6 && < 0.8
     , mtl >= 2.2 && < 2.3
     , pipes >= 4.1 && < 4.2
+    , tagged >= 0.7 && < 0.8
     , vector >= 0.10 && < 0.11
   build-tools: c2hs >= 0.19.1
   if os(darwin)

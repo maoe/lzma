@@ -9,7 +9,8 @@ import Foreign
 import System.Environment
 import System.IO
 
-import Codec.Compression.LZMA.Index
+import Codec.Compression.LZMA.Internal
+import Codec.Compression.LZMA.Internal.C (Index, IndexIter(..))
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf
