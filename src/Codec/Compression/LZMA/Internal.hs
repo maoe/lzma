@@ -26,6 +26,7 @@ module Codec.Compression.LZMA.Internal
 import Control.Applicative
 import Control.Exception (assert)
 import Control.Monad
+import Data.Maybe (fromMaybe)
 import Data.Monoid
 import Data.Typeable (Typeable)
 import Data.Word
@@ -149,10 +150,10 @@ decompressStream params = do
             else do
               (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
               return $ S.PS inFPtr inOffset inLen
-          finalizeStream 0
+          void $ finalizeStream 0
           yield remaining
         Stream.Error code -> do
-          finalizeStream 0
+          void $ finalizeStream 0
           throwStreamError $ DecompressError code
 
 ------------------------------------------------------------
@@ -267,8 +268,14 @@ indexedDecompressStream params index req0 = do
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
       handleRet $ lift $ Stream.blockDecoder indexIter block filters
-      req' <- drainBuffers iter isLastChunk $ calculateSkipBytes req blockUncompPos
+
+      req' <- drainBuffers iter isLastChunk
+        (calculateSkipBytes req blockUncompPos)
+
       liftIO $ do
+        -- The filters and the block need to be kept in memory until a whole
+        -- block is decoded. They're not touched in Haskell but are used in
+        -- liblzma during decoding.
         C.touchFilters filters
         C.touchBlock block
       return req'
@@ -324,11 +331,11 @@ indexedDecompressStream params index req0 = do
             else do
               (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
               return $ S.PS inFPtr inOffset inLen
-          finalizeStream skipBytes
-          return Read
+          req'm <- finalizeStream skipBytes
+          return $ fromMaybe Read req'm
 
         Stream.Error code -> do
-          finalizeStream skipBytes
+          void $ finalizeStream skipBytes
           throwStreamError $ DecompressError code
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
@@ -383,13 +390,15 @@ assertBuffers isLastChunk = do
   let isSane = not outputBufferFull && (isLastChunk || not inputBufferEmpty)
   assert isSane $ return ()
 
-finalizeStream :: Int -> Proxy x' x y' S.ByteString Stream ()
+finalizeStream :: Int -> Proxy x' x y' S.ByteString Stream (Maybe y')
 finalizeStream skipBytes = do
   outputBufferBytesAvailable <- lift Stream.outputBufferBytesAvailable
   if outputBufferBytesAvailable > skipBytes
     then do
       (outFPtr, outOffset, outLen) <- lift Stream.popOutputBuffer
       lift Stream.end
-      void $ respond $ S.PS outFPtr (outOffset + skipBytes) (outLen - skipBytes)
-    else
+      req <- respond $ S.PS outFPtr (outOffset + skipBytes) (outLen - skipBytes)
+      return $ Just req
+    else do
       lift Stream.end
+      return Nothing
