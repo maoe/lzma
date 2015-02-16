@@ -18,7 +18,7 @@ module Codec.Compression.LZMA.Incremental
   , I.Position
   , I.seekableDecompressIO
 
-  , C.Index, I.StreamPadding
+  , C.Index
   , I.decodeIndicies
 ) where
 

@@ -29,7 +29,6 @@ module Codec.Compression.LZMA.Internal
   , decodeIndicies
   , DecodeStream
   , decodeIndexStream
-  , ID.StreamPadding
 
   -- * Types for incremental processing
   , ReadRequest(..)
@@ -431,7 +430,7 @@ finalizeStream skipBytes = do
 -----------------------------------------------------------
 -- Index decoder
 
-decodeIndicies :: Handle -> IO (C.Index, ID.StreamPadding)
+decodeIndicies :: Handle -> IO (C.Index, C.VLI)
 decodeIndicies h = do
   size <- hFileSize h
   C.allocaStreamFlags $ \header ->
@@ -500,7 +499,7 @@ footerSize = headerSize
 -- later be used for seeking.
 decodeIndexStream
   :: Size -- ^ Size of the file
-  -> DecodeStream IndexDecoder (C.Index, ID.StreamPadding)
+  -> DecodeStream IndexDecoder (C.Index, C.VLI)
 decodeIndexStream fileSize = do
   lift $ ID.setPosition $ fromIntegral fileSize
   index <- parseIndex
@@ -527,7 +526,7 @@ parseIndex = do
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
 
-decodeStreamFooter :: DecodeStream IndexDecoder ID.StreamPadding
+decodeStreamFooter :: DecodeStream IndexDecoder C.VLI
 decodeStreamFooter = loop 0
   where
     loop padding = do
@@ -559,8 +558,8 @@ skipStreamPaddings
   -- ^ Input chunk
   -> Int
   -- ^ Index
-  -> ID.StreamPadding
-  -> IndexDecoder ID.StreamPadding
+  -> C.VLI
+  -> IndexDecoder C.VLI
 skipStreamPaddings chunk = go
   where
     go !i !padding =
