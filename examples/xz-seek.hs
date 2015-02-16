@@ -16,9 +16,7 @@ import Pipes.Core
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as S8
 
-import Codec.Compression.LZMA.Index
-import Codec.Compression.LZMA.Internal
-import Codec.Compression.LZMA.Internal.Index
+import Codec.Compression.LZMA.Incremental
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf
@@ -29,7 +27,7 @@ main = do
   (index, _padding) <- withFile file ReadMode decodeIndicies
   withFile file ReadMode $ \h -> runEffect $
     fromHandleRandom h +>>
-    indexedDecompressIO defaultDecompressParams index +>>
+    seekableDecompressIO defaultDecompressParams index +>>
     case args of
       [] -> seekThenReadToEnd 0
       [pos] -> seekThenReadToEnd (read pos)
