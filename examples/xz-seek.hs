@@ -80,7 +80,7 @@ seekAndDump pos = do
   chunk <- request $ PRead pos
   liftIO $ S8.putStrLn $ S.take 80 chunk
 
-printInfoAdvanced :: Index -> StreamPadding -> IO ()
+printInfoAdvanced :: Index -> C.VLI -> IO ()
 printInfoAdvanced index padding = do
   streamCount <- C.lzma_index_stream_count index
   blockCount <- C.lzma_index_block_count index

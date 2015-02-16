@@ -21,7 +21,10 @@ main = do
   (index, padding) <- withFile file ReadMode decodeIndicies
   printInfoAdvanced index padding
 
-printInfoAdvanced :: Index -> StreamPadding -> IO ()
+printInfoAdvanced
+  :: Index
+  -> C.VLI -- ^ Stream padding
+  -> IO ()
 printInfoAdvanced index padding = do
   streamCount <- C.lzma_index_stream_count index
   blockCount <- C.lzma_index_block_count index

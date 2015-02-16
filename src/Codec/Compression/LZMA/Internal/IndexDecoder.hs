@@ -2,7 +2,20 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RecordWildCards #-}
-module Codec.Compression.LZMA.Internal.IndexDecoder where
+module Codec.Compression.LZMA.Internal.IndexDecoder
+  ( IndexDecoder
+  , runIndexDecoder
+  , IndexDecoderState
+  , newIndexDecoderState
+  , getPosition
+  , setPosition
+  , modifyPosition'
+  , getStreamPadding
+  , setStreamPadding
+  , modifyStreamPadding'
+  , getStreamHeader
+  , getStreamFooter
+  ) where
 import Control.Applicative
 import Control.Monad
 
@@ -18,8 +31,8 @@ newtype IndexDecoder a = IndexDecoder
       :: C.StreamFlags -- Stream header
       -> C.StreamFlags -- Stream footer
       -> Position 'Compressed
-      -> StreamPadding
-      -> IO (Position 'Compressed, StreamPadding, a)
+      -> C.VLI -- Stream padding
+      -> IO (Position 'Compressed, C.VLI, a)
   } deriving Functor
 
 instance Applicative IndexDecoder where
@@ -48,12 +61,10 @@ instance MonadCatch IndexDecoder where
         `catch` \e ->
           unIndexDecoder (handler e) header footer pos padding
 
-type StreamPadding = C.VLI
-
 data IndexDecoderState = IndexDecoderState
   { indexDecoderPosition :: !(Position 'Compressed)
   -- ^ Decoder's current position in the compressed file.
-  , indexDecoderStreamPadding :: !StreamPadding
+  , indexDecoderStreamPadding :: !C.VLI
   -- ^ Total size of stream paddings.
   } deriving Show
 
