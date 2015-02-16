@@ -14,6 +14,7 @@ import Control.Monad.Trans (MonadIO(..))
 import Data.ByteString.Lazy.Internal (defaultChunkSize)
 import Pipes.Core
 import qualified Data.ByteString as S
+import qualified Data.ByteString.Char8 as S8
 
 import Codec.Compression.LZMA.Index
 import Codec.Compression.LZMA.Internal
@@ -24,12 +25,19 @@ import Text.Printf
 
 main :: IO ()
 main = do
-  file:pos:_ <- getArgs
+  file:args <- getArgs
   (index, _padding) <- withFile file ReadMode decodeIndicies
   withFile file ReadMode $ \h -> runEffect $
     fromHandleRandom h +>>
     indexedDecompressIO defaultDecompressParams index +>>
-    seekClient (read pos)
+    case args of
+      [] -> seekThenReadToEnd 0
+      [pos] -> seekThenReadToEnd (read pos)
+      positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
+  where
+    integerToPos :: Integer -> Position 'Uncompressed
+    integerToPos = fromIntegral
+
 
 fromHandleRandom
   :: MonadIO m
@@ -58,13 +66,21 @@ fromHandleRandom h = go
           req' <- respond chunk
           go req'
 
-seekClient :: Integer -> Client (ReadRequest 'Uncompressed) S.ByteString IO ()
-seekClient pos = go $ PRead (fromIntegral pos)
+seekThenReadToEnd :: Integer -> Client (ReadRequest 'Uncompressed) S.ByteString IO ()
+seekThenReadToEnd pos = go $ PRead (fromIntegral pos)
   where
     go req = do
       chunk <- request req
-      liftIO $ S.putStr chunk
+      liftIO $ S8.putStr chunk
       go Read
+
+seekAndDump
+  :: Position 'Uncompressed
+  -> Client (ReadRequest 'Uncompressed) S.ByteString IO ()
+seekAndDump pos = do
+  liftIO $ putStrLn $ "----------- Seeking to " ++ show pos
+  chunk <- request $ PRead pos
+  liftIO $ S8.putStrLn $ S.take 80 chunk
 
 printInfoAdvanced :: Index -> StreamPadding -> IO ()
 printInfoAdvanced index padding = do
