@@ -11,7 +11,6 @@ module Codec.Compression.LZMA
   , decompressWith
   , I.DecompressParams(..)
   , I.defaultDecompressParams
-
   ) where
 import qualified Data.ByteString.Lazy as L
 
