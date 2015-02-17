@@ -19,10 +19,10 @@ import qualified Codec.Compression.LZMA.Internal.C as C
 newtype Stream a = Stream
   { unStream
       :: C.Stream
-      -> ForeignPtr Word8
-      -> ForeignPtr Word8
-      -> Int
-      -> Int
+      -> ForeignPtr Word8 -- Input buffer
+      -> ForeignPtr Word8 -- Output buffer
+      -> Int -- Offset of the output
+      -> Int -- Length of the output
       -> IO (ForeignPtr Word8, ForeignPtr Word8, Int, Int, a)
   }
 
