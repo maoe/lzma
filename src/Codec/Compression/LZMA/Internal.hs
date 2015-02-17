@@ -240,6 +240,11 @@ decompressStreamToIO stream = do
 
 ------------------------------------------------------------
 
+-- | The unfolding of the decompression process with random seek support.
+--
+-- Downstream demands uncompressed bytes from a specific position using
+-- 'ReadRequest's. 'SeekableDecompressStream' translates them to compressed
+-- position using 'Index' and sends them to upstream.
 type SeekableDecompressStream = Proxy
   (ReadRequest 'Compressed) S.ByteString
   (ReadRequest 'Uncompressed) S.ByteString
