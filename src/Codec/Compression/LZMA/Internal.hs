@@ -17,7 +17,7 @@ module Codec.Compression.LZMA.Internal
 
   -- ** Incremental processing
   -- *** Sequential decompression
-  , DecompressStream, DecompressError(..)
+  , DecompressStream
   , decompressST
   , decompressIO
   , decompressStream
@@ -35,6 +35,11 @@ module Codec.Compression.LZMA.Internal
   , Position
   , Compression(..)
   , Size
+
+  -- * Exceptions
+  , SomeLZMAException(..)
+  , DecompressException(..)
+  , DecodeException(..)
   ) where
 import Control.Applicative
 import Control.Exception (IOException, assert)
@@ -117,21 +122,20 @@ handleRet
   -> t m ()
 handleRet m = do
   ret <- m
-  unless (ret == C.Ok) $ throwStreamError $ DecompressError C.ProgError
+  case ret of
+    C.Error errorCode -> lift $ throwDecompressError errorCode
+    _ -> return ()
 
-throwStreamError
-  :: (MonadTrans t, MonadThrow m, Exception e)
-  => e -- ^ Exception to throw
-  -> t m a
-throwStreamError = lift . throwM . Stream.SomeStreamException
+throwDecompressError :: MonadThrow m => C.ErrorCode -> m a
+throwDecompressError = throwM . DecompressError
 
 -- | The possible error cases when decompressing a stream.
-data DecompressError = DecompressError Stream.ErrorCode
+data DecompressException = DecompressError Stream.ErrorCode
   deriving (Eq, Show, Typeable)
 
-instance Exception DecompressError where
-  toException = Stream.streamExceptionToException
-  fromException = Stream.streamExceptionFromException
+instance Exception DecompressException where
+  toException = Stream.lzmaExceptionToException
+  fromException = Stream.lzmaExceptionFromException
 
 decompress :: DecompressParams -> L.ByteString -> L.ByteString
 decompress = decompressStreamToLBS . decompressStream
@@ -172,9 +176,9 @@ decompressStream params = do
               return $ S.PS inFPtr inOffset inLen
           void $ finalizeStream 0
           yield remaining
-        Stream.Error code -> do
+        Stream.Error errorCode -> do
           void $ finalizeStream 0
-          throwStreamError $ DecompressError code
+          lift $ throwDecompressError errorCode
 
 ------------------------------------------------------------
 
@@ -358,9 +362,9 @@ seekableDecompressStream params index req0 = do
           req'm <- finalizeStream skipBytes
           return $ fromMaybe Read req'm
 
-        Stream.Error code -> do
+        Stream.Error errorCode -> do
           void $ finalizeStream skipBytes
-          throwStreamError $ DecompressError code
+          lift $ throwDecompressError errorCode
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
 -- position. If it doesn't have a position, find the next non-empty block.
@@ -483,11 +487,12 @@ pread size = do
 -- | Decode things from compressed stream.
 type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
 
-
 -- | Seek operation failure in downstream.
-data SeekException = SeekError C.ErrorCode deriving (Show, Typeable)
+data DecodeException = DecodeError C.ErrorCode deriving (Show, Typeable)
 
-instance Exception SeekException
+instance Exception DecodeException where
+  toException = lzmaExceptionToException
+  fromException = lzmaExceptionFromException
 
 ------------------------------------------------------------
 
@@ -532,13 +537,13 @@ decodeStreamFooter = loop 0
     loop padding = do
       pos <- lift ID.getPosition
       when (pos < 2 * headerSize) $
-        lift $ throwM $ SeekError C.DataError
+        lift $ throwM $ DecodeError C.DataError
 
       pos' <- lift $ do
         ID.modifyPosition' (subtract footerSize)
         ID.getPosition
       when (pos' < footerSize) $
-        lift $ throwM $ SeekError C.DataError
+        lift $ throwM $ DecodeError C.DataError
 
       chunk <- pread footerSize
       if isStreamPadding $ dropStreamPadding 2 chunk
@@ -590,7 +595,7 @@ decodeIndex bufSize = do
   lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
   stream <- liftIO C.newStream
   (ret, indexRef) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
-  unless (ret == C.Ok) $ lift $ throwM $ SeekError C.ProgError
+  unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
 
   loop stream indexRef indexSize
 
@@ -611,11 +616,11 @@ decodeIndex bufSize = do
       ret <- liftIO $ C.lzma_code stream C.Run
       case ret of
         C.Ok -> loop stream indexRef indexSize'
-        C.Error reason -> lift $ throwM $ SeekError reason
+        C.Error reason -> lift $ throwM $ DecodeError reason
         C.StreamEnd -> do
           inAvail' <- liftIO $ C.lzma_get_stream_avail_in stream
           unless (indexSize' == 0 && inAvail' == 0) $
-            lift $ throwM $ SeekError C.DataError
+            lift $ throwM $ DecodeError C.DataError
 
 -- | Decode the stream header and check that its stream flags match the stream
 -- footer.

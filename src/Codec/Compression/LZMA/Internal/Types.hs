@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -7,9 +9,20 @@ module Codec.Compression.LZMA.Internal.Types
   , Position
   , Compression(..)
   , Size
+
+  -- * Exceptions
+  , SomeLZMAException(..)
+  , lzmaExceptionToException
+  , lzmaExceptionFromException
+  , LZMAException(..)
+  , C.ErrorCode(..)
   ) where
+import Control.Exception
+import Data.Typeable (Typeable, cast)
 
 import Data.Tagged (Tagged)
+
+import qualified Codec.Compression.LZMA.Internal.C as C
 
 -- | Read request to upstream.
 --
@@ -36,3 +49,27 @@ data Compression = Compressed | Uncompressed
   deriving (Eq, Show)
 
 type Size = Int
+
+data SomeLZMAException = forall e. Exception e => SomeLZMAException e
+  deriving Typeable
+
+instance Show SomeLZMAException where
+  show (SomeLZMAException e) = show e
+
+instance Exception SomeLZMAException
+
+lzmaExceptionToException :: Exception e => e -> SomeException
+lzmaExceptionToException = toException . SomeLZMAException
+
+lzmaExceptionFromException :: Exception e => SomeException -> Maybe e
+lzmaExceptionFromException x = do
+  SomeLZMAException e <- fromException x
+  cast e
+
+-- | Error code thrown by liblzma
+data LZMAException = LZMAErrorCode C.ErrorCode
+  deriving (Typeable, Show)
+
+instance Exception LZMAException where
+  toException = lzmaExceptionToException
+  fromException = lzmaExceptionFromException

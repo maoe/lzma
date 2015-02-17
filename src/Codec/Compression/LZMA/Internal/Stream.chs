@@ -41,9 +41,10 @@ module Codec.Compression.LZMA.Internal.Stream
   , outputBufferSpaceRemaining
 
   -- * Exceptions
-  , M.SomeStreamException(..)
-  , M.streamExceptionToException
-  , M.streamExceptionFromException
+  , SomeLZMAException(..)
+  , lzmaExceptionToException
+  , lzmaExceptionFromException
+  , LZMAException(..)
 
 #ifdef DEBUG
   -- * Debugging tools
@@ -58,6 +59,7 @@ import Foreign
 import Foreign.C
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 
+import Control.Monad.Catch
 import Control.Monad.ST
 import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Control.Monad.Trans (liftIO)
@@ -65,13 +67,13 @@ import Data.Vector.Storable.Mutable (IOVector)
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
 {# import Codec.Compression.LZMA.Internal.C #}
+import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.Stream.Monad as M
 
 #ifdef DEBUG
 import Debug.Trace
 import System.IO (hPrint, hPutStrLn, stderr)
 #endif
-
 
 #include <lzma.h>
 
@@ -391,18 +393,23 @@ blockDecoder IndexIter {..} block filters = do
   stream <- getStream
   allocator <- getAllocator
   inAvail <- getInAvail
-  liftIO $ lzma_block_header_decode block allocator inNext
+  handleRet $ liftIO $ lzma_block_header_decode block allocator inNext
 
-  liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
+  handleRet $ liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
 
-  blockHeaderSize <- liftIO $ do
-    lzma_block_header_size block
-    lzma_get_block_header_size block
+  handleRet $ liftIO $ lzma_block_header_size block
+  blockHeaderSize <- liftIO $ lzma_get_block_header_size block
 
   setInNext $ inNext `advancePtr` fromIntegral blockHeaderSize
   setInAvail $ inAvail - fromIntegral blockHeaderSize
 
   liftIO $ lzma_block_decoder stream block
+  where
+    handleRet m = do
+      ret <- m
+      case ret of
+        Error errorCode -> throwM (LZMAErrorCode errorCode)
+        _ -> return ()
 
 ------------------------------------------------------------
 -- Debugging tools

@@ -1,12 +1,9 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 module Codec.Compression.LZMA.Internal.Stream.Monad where
 import Control.Applicative
 import Control.Monad
-import Data.Typeable (Typeable, cast)
 import Foreign
 
 import Control.Monad.Catch
@@ -48,22 +45,6 @@ unsafeLiftIO :: IO a -> Stream a
 unsafeLiftIO m = Stream $ \_stream inBuf outBuf outOffset outLength -> do
   a <- m
   return (inBuf, outBuf, outOffset, outLength, a)
-
-data SomeStreamException = forall e. Exception e => SomeStreamException e
-  deriving Typeable
-
-instance Show SomeStreamException where
-  show (SomeStreamException e) = show e
-
-instance Exception SomeStreamException
-
-streamExceptionToException :: Exception e => e -> SomeException
-streamExceptionToException = toException . SomeStreamException
-
-streamExceptionFromException :: Exception e => SomeException -> Maybe e
-streamExceptionFromException x = do
-  SomeStreamException e <- fromException x
-  cast e
 
 instance MonadThrow Stream where
   throwM = unsafeLiftIO . throwM
