@@ -9,8 +9,10 @@ module Codec.Compression.LZMA
 
   -- * Extended API with control over (de)compression parameters
   , decompressWith
-  , I.DecompressParams(..)
+  , I.DecompressParams
   , I.defaultDecompressParams
+  , I.decompressBufferSize
+  , I.decompressMemoryLimit
   ) where
 import qualified Data.ByteString.Lazy as L
 

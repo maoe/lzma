@@ -9,8 +9,10 @@ module Codec.Compression.LZMA.Incremental
   , I.decompressST
 
   -- * Incremental decompression with random seek
-  , I.DecompressParams(..)
+  , I.DecompressParams
   , I.defaultDecompressParams
+  , I.decompressBufferSize
+  , I.decompressMemoryLimit
 
   , I.SeekableDecompressStream
   , I.ReadRequest(..)
