@@ -36,9 +36,10 @@ instance Applicative Stream where
 instance Monad Stream where
   return a = Stream $ \_ inBuf outBuf offset len ->
     return (inBuf, outBuf, offset, len, a)
-  Stream m >>= k = Stream $ \stream inBuf outBuf offset len -> do
-    (inBuf', outBuf', offset', len', a) <- m stream inBuf outBuf offset len
-    unStream (k a) stream inBuf' outBuf' offset' len'
+  Stream m >>= k = Stream $ \stream inBuf outBuf outOffset outLength -> do
+    (inBuf', outBuf', outOffset', outLength', a) <-
+      m stream inBuf outBuf outOffset outLength
+    unStream (k a) stream inBuf' outBuf' outOffset' outLength'
 
 instance MonadIO Stream where
   liftIO = unsafeLiftIO
@@ -69,24 +70,24 @@ instance MonadThrow Stream where
 
 instance MonadCatch Stream where
   catch (Stream m) handler =
-    Stream $ \stream inBuf outBuf offset len ->
-      m stream inBuf outBuf offset len
+    Stream $ \stream inBuf outBuf outOffset outLength ->
+      m stream inBuf outBuf outOffset outLength
         `catch` \e ->
-          unStream (handler e) stream inBuf outBuf offset len
+          unStream (handler e) stream inBuf outBuf outOffset outLength
 
 instance MonadMask Stream where
-  mask f = Stream $ \stream inBuf outBuf offset len ->
+  mask f = Stream $ \stream inBuf outBuf outOffset outLength ->
     mask $ \restore ->
-      unStream (f $ g restore) stream inBuf outBuf offset len
+      unStream (f $ g restore) stream inBuf outBuf outOffset outLength
     where
       g :: (forall b. IO b -> IO b) -> Stream a -> Stream a
-      g restore (Stream m) = Stream $ \stream inBuf outBuf offset len ->
-        restore $ m stream inBuf outBuf offset len
+      g restore (Stream m) = Stream $ \stream inBuf outBuf outOffset outLength ->
+        restore $ m stream inBuf outBuf outOffset outLength
 
-  uninterruptibleMask f = Stream $ \stream inBuf outBuf offset len ->
+  uninterruptibleMask f = Stream $ \stream inBuf outBuf outOffset outLength ->
     uninterruptibleMask $ \restore ->
-      unStream (f $ g restore) stream inBuf outBuf offset len
+      unStream (f $ g restore) stream inBuf outBuf outOffset outLength
     where
       g :: (forall b. IO b -> IO b) -> Stream a -> Stream a
-      g restore (Stream m) = Stream $ \stream inBuf outBuf offset len ->
-        restore $ m stream inBuf outBuf offset len
+      g restore (Stream m) = Stream $ \stream inBuf outBuf outOffset outLength ->
+        restore $ m stream inBuf outBuf outOffset outLength
