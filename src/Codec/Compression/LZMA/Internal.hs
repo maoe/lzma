@@ -391,7 +391,7 @@ fillBuffers DecompressParams {..} req = do
     fillOutputBuffer = lift $ do
       outputBufferFull <- Stream.isOutputBufferFull
       when outputBufferFull $ do
-        outFPtr <- Stream.unsafeLiftIO $ S.mallocByteString decompressBufferSize
+        outFPtr <- liftIO $ S.mallocByteString decompressBufferSize
         Stream.pushOutputBuffer outFPtr 0 decompressBufferSize
 
     fillInputBuffer = do
