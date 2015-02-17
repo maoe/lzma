@@ -305,8 +305,10 @@ setOutFree :: Int -> M.Stream ()
 setOutFree n = withStreamPtr $ \p ->
   {# set lzma_stream.avail_out #} p (fromIntegral n)
 
+#if DEBUG
 getOutNext :: M.Stream (Ptr Word8)
 getOutNext = castPtr <$> withStreamPtr {# get lzma_stream.next_out #}
+#endif
 
 setOutNext :: Ptr Word8 -> M.Stream ()
 setOutNext p' = withStreamPtr $ \p ->
