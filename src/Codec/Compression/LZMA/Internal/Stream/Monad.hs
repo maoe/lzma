@@ -41,9 +41,12 @@ instance Monad Stream where
     unStream (k a) stream inBuf' outBuf' offset' len'
 
 instance MonadIO Stream where
-  liftIO io = Stream $ \_ inBuf outBuf offset len -> do
-    a <- io
-    return (inBuf, outBuf, offset, len, a)
+  liftIO = unsafeLiftIO
+
+unsafeLiftIO :: IO a -> Stream a
+unsafeLiftIO m = Stream $ \_stream inBuf outBuf outOffset outLength -> do
+  a <- m
+  return (inBuf, outBuf, outOffset, outLength, a)
 
 data SomeStreamException = forall e. Exception e => SomeStreamException e
   deriving Typeable
@@ -62,7 +65,7 @@ streamExceptionFromException x = do
   cast e
 
 instance MonadThrow Stream where
-  throwM = liftIO . throwM
+  throwM = unsafeLiftIO . throwM
 
 instance MonadCatch Stream where
   catch (Stream m) handler =
