@@ -214,7 +214,7 @@ newState = unsafeIOToST $ do
 
     -- internal fields
     {# set lzma_stream.internal #} p nullPtr
-    {# set lzma_stream.allocator #} p $ maybeToAllocator Nothing
+    {# set lzma_stream.allocator #} p nullPtr
     {# set lzma_stream.reserved_ptr1 #} p nullPtr
     {# set lzma_stream.reserved_ptr2 #} p nullPtr
     {# set lzma_stream.reserved_ptr3 #} p nullPtr
@@ -271,11 +271,6 @@ getOutAvail = M.Stream $ \_stream inBuf outBuf outOffset outLength ->
 setOutAvail :: Int -> M.Stream ()
 setOutAvail outLength = M.Stream $ \_stream inBuf outBuf outOffset _ ->
   return (inBuf, outBuf, outOffset, outLength, ())
-
-getAllocator :: M.Stream (Maybe Allocator)
-getAllocator = do
-  allocator <- withStreamPtr {# get lzma_stream.allocator #}
-  return $ if allocator == nullAllocator then Nothing else Just allocator
 
 ------------------------------------------------------------
 
@@ -391,9 +386,8 @@ blockDecoder IndexIter {..} block filters = do
     lzma_set_block_header_size block $ lzma_block_header_size_decode firstByte
 
   stream <- getStream
-  allocator <- getAllocator
   inAvail <- getInAvail
-  handleRet $ liftIO $ lzma_block_header_decode block allocator inNext
+  handleRet $ liftIO $ lzma_block_header_decode block inNext
 
   handleRet $ liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
 

@@ -17,7 +17,6 @@ module Codec.Compression.LZMA.Internal.C
   , lzma_set_stream_avail_out
   , lzma_set_stream_next_in
   , lzma_set_stream_next_out
-  , lzma_get_stream_allocator
 
   -- * Stream header and footer
   , StreamFlags
@@ -119,10 +118,6 @@ module Codec.Compression.LZMA.Internal.C
   -- ** Return types
   , Ret(..), ErrorCode(..)
   , Check(..)
-  -- ** Allocator
-  , Allocator
-  , maybeToAllocator
-  , nullAllocator
   -- ** Preset
   , Preset
   , defaultPreset, extremePreset, customPreset
@@ -142,7 +137,6 @@ module Codec.Compression.LZMA.Internal.C
 import Control.Applicative
 import Control.Monad
 import Data.List (unfoldr)
-import Data.Maybe
 import Foreign
 import Foreign.C
 import Unsafe.Coerce (unsafeCoerce)
@@ -235,51 +229,6 @@ lzma_set_stream_next_in stream inNext = withStream stream $ \p ->
 lzma_set_stream_next_out :: Stream -> Ptr Word8 -> IO ()
 lzma_set_stream_next_out stream outNext = withStream stream $ \p ->
   {# set lzma_stream.next_out #} p (castPtr outNext)
-
-lzma_get_stream_allocator :: Stream -> IO (Maybe Allocator)
-lzma_get_stream_allocator stream = do
-  allocPtr <- withStream stream {# get lzma_stream.allocator #}
-  return $ do
-    guard $ allocPtr == nullPtr
-    return $ Allocator $ castPtr allocPtr
-
--- | Custom functions for memory handling.
---
--- A pointer to 'Allocator' may be passed via 'Stream' structure to
--- liblzma, and some advanced functions take a pointer to 'Allocator' as a
--- separate function argument. The library will use the functions specified in
--- 'Allocator' for memory handling instead of the default malloc() and
--- free(). C++ users should note that the custom memory handling functions must
--- not throw exceptions.
---
--- Single-threaded mode only: liblzma doesn't make an internal copy of
--- 'Allocator'. Thus, it is OK to change these function pointers in the
--- middle of the coding process, but obviously it must be done carefully to
--- make sure that the replacement `free' can deallocate memory allocated by the
--- earlier `alloc' function(s).
---
--- Multithreaded mode: liblzma might internally store pointers to the
--- 'Allocator' given via the 'Stream' structure. The application must not
--- change the allocator pointer in 'Stream' or the contents of the pointed
--- 'Allocator' structure until 'lzma_end' has been used to free the memory
--- associated with that 'Stream'. The allocation functions might be called
--- simultaneously from multiple threads, and thus they must be thread safe.
-{# pointer *lzma_allocator as Allocator newtype #}
-deriving instance Storable Allocator
-deriving instance Eq Allocator
-deriving instance Show Allocator
-
-unAllocator :: Allocator -> Ptr Allocator
-unAllocator (Allocator ptr) = ptr
-
-fromMaybeAllocator :: Maybe Allocator -> Ptr Allocator
-fromMaybeAllocator = maybe nullPtr unAllocator
-
-maybeToAllocator :: Maybe Allocator -> Allocator
-maybeToAllocator = fromMaybe (Allocator nullPtr)
-
-nullAllocator :: Allocator
-nullAllocator = Allocator nullPtr
 
 -- | The action argument for 'lzma_code'.
 --
@@ -672,7 +621,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 
 {# fun lzma_block_header_decode
   { `Block'
-  , maybeToAllocator `Maybe Allocator'
+  , passNullPtr- `Ptr ()'
   , castPtr `Ptr Word8'
   } -> `Ret' toRet
   #}
@@ -751,7 +700,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 
 {# fun lzma_block_buffer_encode
   { `Block'
-  , maybeToAllocator `Maybe Allocator'
+  , passNullPtr- `Ptr ()'
   , castPtr `Ptr Word8'
   , fromIntegral `Word64'
   , castPtr `Ptr Word8'
@@ -786,7 +735,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 {# fun lzma_block_buffer_decode
   { `Block'
   -- ^ Block options just like with 'lzma_block_decoder'.
-  , maybeToAllocator `Maybe Allocator'
+  , passNullPtr- `Ptr ()'
   -- ^ 'Allocator' for custom allocator functions. Set to 'Nothing' to use
   -- @malloc()@ and @free()@.
   , castPtr `Ptr Word8'
@@ -886,7 +835,7 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 {# pointer *lzma_index as Index foreign newtype #}
 
 foreign import ccall "lzma.h &finalize_index"
-  lzma_finalize_index :: FinalizerEnvPtr Allocator Index
+  lzma_finalize_index :: FinalizerPtr Index
 
 touchIndex :: Index -> IO ()
 touchIndex (Index fptr) = touchForeignPtr fptr
@@ -909,12 +858,10 @@ withIndexRef (IndexRef refFPtr) f =
 -- | Pointer to an 'IndexIter'.
 {# pointer *lzma_index_iter as IndexIterPtr foreign -> IndexIter #}
 
-peekIndexRef :: IndexRef -> Maybe Allocator -> IO Index
-peekIndexRef ref allocator = do
+peekIndexRef :: IndexRef -> IO Index
+peekIndexRef ref = do
   index@(Index fptr) <- withIndexRef ref return
-  addForeignPtrFinalizerEnv lzma_finalize_index
-    (fromMaybeAllocator allocator)
-    fptr
+  addForeignPtrFinalizer lzma_finalize_index fptr
   return index
 
 -- | Iterator to get information about Blocks and Streams.
@@ -1168,10 +1115,10 @@ instance Storable IndexIter where
 --
 -- On success, a pointer to an empty initialized 'Index' is returned.
 -- If allocation fails, NULL is returned.
-lzma_index_init :: Maybe Allocator -> IO Index
-lzma_index_init (maybeToAllocator -> alloc@(Allocator allocPtr)) = do
-  indexPtr <- {# call lzma_index_init as c_lzma_index_init #} alloc
-  indexFPtr <- newForeignPtrEnv lzma_finalize_index allocPtr indexPtr
+lzma_index_init :: IO Index
+lzma_index_init = do
+  indexPtr <- {# call lzma_index_init as c_lzma_index_init #} nullPtr
+  indexFPtr <- newForeignPtr lzma_finalize_index indexPtr
   return $ Index indexFPtr
 
 -- | Deallocate 'Index'.
@@ -1181,7 +1128,7 @@ lzma_index_init (maybeToAllocator -> alloc@(Allocator allocPtr)) = do
 -- finalizer when the 'Index' is garbage collected.
 {# fun lzma_index_end
   { `Index'
-  , maybeToAllocator `Maybe Allocator'
+  , passNullPtr- `Ptr ()'
   } -> `()'
   #}
 
@@ -1193,7 +1140,7 @@ lzma_index_init (maybeToAllocator -> alloc@(Allocator allocPtr)) = do
 {# fun lzma_index_append
   { `Index'
   -- ^ Pointer to a 'Index' structure
-  , maybeToAllocator `Maybe Allocator'
+  , passNullPtr- `Ptr ()'
   -- ^ Pointer to lzma_allocator, or NULL to use malloc()
   , fromIntegral `VLI'
   -- ^ Unpadded Size of a Block. This can be calculated with
@@ -1390,19 +1337,19 @@ lzma_index_iter_init index = do
   --
   -- If this function succeeds, the memory allocated for src is freed or moved
   -- to be part of dest, and all iterators pointing to src will become invalid.
-  , maybeToAllocator `Maybe Allocator'
-  -- ^ Custom memory allocator; can be 'Nothing' to use malloc() and free().
+  , passNullPtr- `Ptr ()'
+  -- ^ Custom memory allocator
   } -> `Ret' toRet
   #}
 
 -- | Duplicate 'Index'.
 --
 -- Returns a copy of the 'Index', or NULL if memory allocation failed.
-lzma_index_dup :: Index -> Maybe Allocator -> IO Index
-lzma_index_dup index (maybeToAllocator -> alloc@(Allocator allocPtr)) = do
+lzma_index_dup :: Index -> IO Index
+lzma_index_dup index = do
   indexPtr <- withIndex index $ \indexPtr ->
-    {# call lzma_index_dup as c_lzma_index_dup #} indexPtr alloc
-  indexFPtr <- newForeignPtrEnv lzma_finalize_index allocPtr indexPtr
+    {# call lzma_index_dup as c_lzma_index_dup #} indexPtr nullPtr
+  indexFPtr <- newForeignPtr lzma_finalize_index indexPtr
   return $ Index indexFPtr
 
 -- | Initialize .xz index encoder.
@@ -1436,6 +1383,9 @@ lzma_index_decoder stream (fromIntegral -> memLimit) =
         {# call lzma_index_decoder as c_lzma_index_decoder #}
             streamPtr indexPPtr memLimit
       return (ret, IndexRef refFPtr)
+
+passNullPtr :: (Ptr a -> b) -> b
+passNullPtr f = f nullPtr
 
 #if DEBUG
 instance PrettyVal IndexIter
