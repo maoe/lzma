@@ -522,7 +522,7 @@ decodeIndexStream fileSize = do
       pos <- lift ID.getPosition
       when (pos > 0) $ do
         index' <- parseIndex
-        handleRet $ liftIO $ C.lzma_index_cat index index' Nothing
+        handleRet $ liftIO $ C.lzma_index_cat index index'
         loop index
 
 -- | Parse an index
@@ -604,9 +604,7 @@ decodeIndex bufSize = do
 
   loop stream indexRef indexSize
 
-  liftIO $ do
-    allocator <- C.lzma_get_stream_allocator stream
-    C.peekIndexRef indexRef allocator
+  liftIO $ C.peekIndexRef indexRef
   where
     loop stream indexRef indexSize = do
       let inAvail :: Integral a => a
