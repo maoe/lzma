@@ -443,7 +443,7 @@ decodeIndicies :: Handle -> IO (C.Index, C.VLI)
 decodeIndicies h = do
   size <- hFileSize h
   C.allocaStreamFlags $ \header ->
-    C.allocaStreamFlags $ \footer -> do
+    C.allocaStreamFlags $ \footer ->
       runDecodeStream h $ indexDecodingToIO
         (decodeIndexStream (fromIntegral size))
         ID.newIndexDecoderState header footer
