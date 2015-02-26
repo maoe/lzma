@@ -144,7 +144,6 @@ import Unsafe.Coerce (unsafeCoerce)
 import qualified GHC.Generics as GHC
 
 import Data.Vector.Storable.Mutable (IOVector)
-import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 
 import Codec.Compression.LZMA.Internal.Constants
@@ -580,7 +579,6 @@ lzma_set_block_check block check =
   withBlock block $ \blockPtr ->
     {# set lzma_block.check #} blockPtr (fromIntegral (fromEnum check))
 
--- TODO: This array of filters needs to be freed afterwards.
 lzma_set_block_filters :: Block -> IOVector Filter -> IO ()
 lzma_set_block_filters block (VM.MVector _ filtersFPtr) =
   withBlock block $ \blockPtr ->
@@ -802,14 +800,15 @@ instance Storable Filter where
 filtersMax :: Int
 filtersMax = {# const LZMA_FILTERS_MAX #}
 
-newFilters :: V.Vector Filter -> IO (IOVector Filter)
+newFilters :: [Filter] -> IO (IOVector Filter)
 newFilters filters = do
-  iov <- VM.new (len + 1)
-  V.unsafeCopy iov filters
-  VM.write iov len terminal
-  return iov
+  fptr <- mallocForeignPtrArray0 len
+  withForeignPtr fptr $ \ptr -> do
+    mapM_ (poke ptr) filters
+    poke ptr terminal
+  return $ VM.MVector len fptr
   where
-    len = V.length filters
+    len = length filters
     terminal = Filter
       { filterId = unsafeCoerce vliUnknown
       , filterOptions = nullPtr
