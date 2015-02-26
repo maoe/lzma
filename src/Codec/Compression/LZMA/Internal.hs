@@ -560,7 +560,9 @@ decodeStreamFooter = loop 0
           handleRet $ liftIO $ do
             let S.PS inFPtr _off _len = chunk
             withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
-          -- TODO: check the version of the stream footer
+          version <- liftIO $ C.lzma_get_stream_flags_version footer
+          unless (version ==  0) $
+            lift $ throwM $ DecodeError C.DataError
           return padding
 
 skipStreamPaddings

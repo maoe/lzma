@@ -22,6 +22,7 @@ module Codec.Compression.LZMA.Internal.C
   , StreamFlags
   , allocaStreamFlags
   , lzma_get_stream_flags_check
+  , lzma_get_stream_flags_version
   , lzma_stream_flags_backward_size
   , streamHeaderSize
   , lzma_stream_header_decode
@@ -447,6 +448,11 @@ lzma_get_stream_flags_check :: StreamFlags -> IO Check
 lzma_get_stream_flags_check flags = do
   n <- {# get lzma_stream_flags.check #} flags
   return $ toEnum $ fromIntegral n
+
+lzma_get_stream_flags_version :: StreamFlags -> IO Word32
+lzma_get_stream_flags_version flags = do
+  version <- {# get lzma_stream_flags.version #} flags
+  return $ fromIntegral version
 
 -- | Backward Size.
 --
