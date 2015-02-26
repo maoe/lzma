@@ -51,32 +51,6 @@ library
     cbits/lzma.c
   default-language: Haskell2010
 
--- executable xz-seek-iteratee
---   main-is: seek-iteratee.hs
---   build-depends:
---       base
---     , bytestring
---     , iteratee == 0.8.4.6
---     , lzma
---     , mtl
---   hs-source-dirs: examples
---   default-language: Haskell2010
-
-executable xz-seek-conduit
-  buildable: False
-  main-is: seek-conduit.hs
-  build-depends:
-      base
-    , bytestring
-    , conduit
-    , conduit-extra
-    , exceptions
-    , lzma
-    , mtl
-    , resourcet
-  hs-source-dirs: examples
-  default-language: Haskell2010
-
 executable xz-list
   -- buildable: False
   main-is: xz-list.hs
