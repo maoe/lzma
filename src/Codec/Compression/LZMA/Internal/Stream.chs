@@ -427,8 +427,8 @@ dump label = do
   outTotal <- withStreamPtr {# get lzma_stream.total_out #}
 
   liftIO $ hPutStrLn stderr $
-    label ++ "\n" ++
-    "M.Stream {\n" ++
+    label ++ ": " ++
+    "Stream {\n" ++
     "  inNext    = " ++ show inNext    ++ ",\n" ++
     "  inAvail   = " ++ show inAvail   ++ ",\n" ++
     "\n" ++
