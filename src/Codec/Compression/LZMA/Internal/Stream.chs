@@ -385,17 +385,18 @@ blockDecoder IndexIter {..} block filters = do
     firstByte <- peek inNext
     lzma_set_block_header_size block $ lzma_block_header_size_decode firstByte
 
-  stream <- getStream
   inAvail <- getInAvail
   handleRet $ liftIO $ lzma_block_header_decode block inNext
 
-  handleRet $ liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
+  handleRet $
+    liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
 
   blockHeaderSize <- liftIO $ lzma_get_block_header_size block
 
   setInNext $ inNext `advancePtr` fromIntegral blockHeaderSize
   setInAvail $ inAvail - fromIntegral blockHeaderSize
 
+  stream <- getStream
   liftIO $ lzma_block_decoder stream block
   where
     handleRet m = do
