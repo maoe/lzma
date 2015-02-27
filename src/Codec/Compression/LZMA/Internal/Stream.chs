@@ -391,7 +391,6 @@ blockDecoder IndexIter {..} block filters = do
 
   handleRet $ liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
 
-  handleRet $ liftIO $ lzma_block_header_size block
   blockHeaderSize <- liftIO $ lzma_get_block_header_size block
 
   setInNext $ inNext `advancePtr` fromIntegral blockHeaderSize
