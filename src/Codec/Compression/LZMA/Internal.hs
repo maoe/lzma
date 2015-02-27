@@ -493,7 +493,12 @@ pread size = do
 type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
 
 -- | Seek operation failure in downstream.
-data DecodeException = DecodeError C.ErrorCode deriving (Show, Typeable)
+data DecodeException = DecodeError
+  C.ErrorCode
+  -- ^ Error code from liblzma
+  String
+  -- ^ Description of the error
+  deriving (Show, Typeable)
 
 instance Exception DecodeException where
   toException = lzmaExceptionToException
@@ -543,12 +548,15 @@ decodeStreamFooter = loop 0
       pos <- lift ID.getPosition
       when (pos < 2 * headerSize) $
         lift $ throwM $ DecodeError C.DataError
+          "This file is too small to be a valid .xz file."
 
       pos' <- lift $ do
         ID.modifyPosition' (subtract footerSize)
         ID.getPosition
       when (pos' < footerSize) $
-        lift $ throwM $ DecodeError C.DataError
+        lift $ throwM $ DecodeError C.DataError $
+          "There is not enough data left to contain at least a stream header" ++
+          "and a stream footer."
 
       chunk <- pread footerSize
       if isStreamPadding $ dropStreamPadding 2 chunk
@@ -562,7 +570,8 @@ decodeStreamFooter = loop 0
             withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
           version <- liftIO $ C.lzma_get_stream_flags_version footer
           unless (version ==  0) $
-            lift $ throwM $ DecodeError C.DataError
+            lift $ throwM $ DecodeError C.OptionsError
+              "The stream footer specifies something that we don't support."
           return padding
 
 skipStreamPaddings
@@ -603,6 +612,7 @@ decodeIndex bufSize = do
   stream <- liftIO C.newStream
   (ret, indexRef) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
   unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
+    "Failed to initialize an index decoder."
 
   loop stream indexRef indexSize
 
@@ -621,11 +631,18 @@ decodeIndex bufSize = do
       ret <- liftIO $ C.lzma_code stream C.Run
       case ret of
         C.Ok -> loop stream indexRef indexSize'
-        C.Error reason -> lift $ throwM $ DecodeError reason
+        C.Error C.BufError ->
+          lift $ throwM $ DecodeError C.DataError $
+            "The index decoder has liked more input than what the index " ++
+            "should be according to stream footer."
+        C.Error code ->
+          lift $ throwM $ DecodeError code "The index decoder faild."
         C.StreamEnd -> do
           inAvail' <- liftIO $ C.lzma_get_stream_avail_in stream
           unless (indexSize' == 0 && inAvail' == 0) $
-            lift $ throwM $ DecodeError C.DataError
+            lift $ throwM $ DecodeError C.DataError $
+              "The index decoder didn't consume as much input as indicated " ++
+              "by the backward size field."
 
 -- | Decode the stream header and check that its stream flags match the stream
 -- footer.
