@@ -294,6 +294,10 @@ seekableDecompressStream params index req0 = do
       -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     decodeBlock iter req = do
       lift Stream.flushBuffers
+#if DEBUG
+      liftIO $ C.dumpIndexIter iter
+      traceM $ "decodeBlock " ++ show iter ++ " " ++ show req
+#endif
       indexIter@C.IndexIter {..} <- liftIO $ withForeignPtr iter peek
       let
         C.IndexIterStream {indexIterStreamBlockCount} = indexIterStream
@@ -312,7 +316,9 @@ seekableDecompressStream params index req0 = do
       filters <- liftIO C.newFiltersMaxLength
       handleRet "Failed to initialize a block decoder" $
         lift $ Stream.blockDecoder indexIter block filters
-
+#if DEBUG
+      lift $ Stream.dump "decodeBlock"
+#endif
       req' <- drainBuffers iter isLastChunk
         (calculateSkipBytes req blockUncompPos)
 
@@ -350,6 +356,9 @@ seekableDecompressStream params index req0 = do
       ret <- lift $ Stream.decompress $ if isLastChunk
         then Stream.Finish
         else Stream.Run
+#if DEBUG
+      traceM $ "decompress -> " ++ show ret
+#endif
       case ret of
         Stream.Ok -> do
           outputBufferFull <- lift Stream.isOutputBufferFull
@@ -380,7 +389,7 @@ seekableDecompressStream params index req0 = do
 
         Stream.Error code -> do
           void $ finalizeStream skipBytes
-          lift $ throwDecompressError code "The block decoder failed."
+          lift $ throwDecompressError code "Failed to decode a block"
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
 -- position. If it doesn't have a position, find the next non-empty block.
