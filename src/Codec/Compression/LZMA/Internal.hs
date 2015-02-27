@@ -124,7 +124,7 @@ handleRet
 handleRet reason m = do
   ret <- m
   case ret of
-    C.Error errorCode -> lift $ throwDecompressError errorCode reason
+    C.Error code -> lift $ throwDecompressError code reason
     _ -> return ()
 
 throwDecompressError
@@ -186,9 +186,9 @@ decompressStream params = do
               return $ S.PS inFPtr inOffset inLen
           void $ finalizeStream 0
           yield remaining
-        Stream.Error errorCode -> do
+        Stream.Error code -> do
           void $ finalizeStream 0
-          lift $ throwDecompressError errorCode "The stream decoder failed."
+          lift $ throwDecompressError code "The stream decoder failed."
 
 ------------------------------------------------------------
 
@@ -378,9 +378,9 @@ seekableDecompressStream params index req0 = do
           req'm <- finalizeStream skipBytes
           return $ fromMaybe Read req'm
 
-        Stream.Error errorCode -> do
+        Stream.Error code -> do
           void $ finalizeStream skipBytes
-          lift $ throwDecompressError errorCode "The block decoder failed."
+          lift $ throwDecompressError code "The block decoder failed."
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
 -- position. If it doesn't have a position, find the next non-empty block.
