@@ -34,27 +34,27 @@ assertNonNullIndex label index =
 
 createEmpty :: IO Index
 createEmpty = do
-  index <- lzma_index_init Nothing
+  index <- lzma_index_init
   assertNonNullIndex "lzma_index_init" index
   return index
 
 createSmall :: IO Index
 createSmall = do
-  index <- lzma_index_init Nothing
+  index <- lzma_index_init
   do
-    ret <- lzma_index_append index Nothing 101 555
+    ret <- lzma_index_append index 101 555
     assertEqual "lzma_index_append index Nothing 101 555" Ok ret
   do
-    ret <- lzma_index_append index Nothing 602 777
+    ret <- lzma_index_append index 602 777
     assertEqual "lzma_index_append index Nothing 602 777" Ok ret
   do
-    ret <- lzma_index_append index Nothing 804 999
+    ret <- lzma_index_append index 804 999
     assertEqual "lzma_index_append index Nothing 804 999" Ok ret
   return index
 
 createBig :: IO Index
 createBig = do
-  index <- lzma_index_init Nothing
+  index <- lzma_index_init
   (totalSize, uncompressedSize) <- go index 0 11 0 0
   do
     count <- lzma_index_block_count index
@@ -80,7 +80,7 @@ createBig = do
           let !n = 7019 * n0 + 7607
               !t = n * 3011
           do
-            ret <- lzma_index_append index Nothing (fromIntegral t) (fromIntegral n)
+            ret <- lzma_index_append index (fromIntegral t) (fromIntegral n)
             let message = printf "go.lzma_index_append %d %d [j=%d]" t n j
             assertEqual message Ok ret
           let !totalSize' = totalSize + ((fromIntegral t + 3) .&. complement 3)
@@ -90,7 +90,7 @@ createBig = do
 case_overflow :: Assertion
 case_overflow = do
   index <- createEmpty
-  ret <- lzma_index_append index Nothing (maxBound - 5) 1234
+  ret <- lzma_index_append index (maxBound - 5) 1234
   assertEqual "lzma_index_append" (Error DataError) ret
 
 testMany :: Index -> Assertion
@@ -101,7 +101,7 @@ testMany index = do
 
 testCopy :: Index -> Assertion
 testCopy index = do
-  index' <- lzma_index_dup index Nothing
+  index' <- lzma_index_dup index
   assertNonNullIndex "lzma_index_dup" index'
   -- TODO: Implement isEqualIndex
 
