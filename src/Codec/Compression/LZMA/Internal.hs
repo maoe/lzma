@@ -118,19 +118,28 @@ type DecompressStream = Pipe S.ByteString S.ByteString
 
 handleRet
   :: (MonadTrans t, Monad (t m), MonadThrow m)
-  => t m C.Ret
+  => String -- ^ Description of an error if exists
+  -> t m C.Ret
   -> t m ()
-handleRet m = do
+handleRet reason m = do
   ret <- m
   case ret of
-    C.Error errorCode -> lift $ throwDecompressError errorCode
+    C.Error errorCode -> lift $ throwDecompressError errorCode reason
     _ -> return ()
 
-throwDecompressError :: MonadThrow m => C.ErrorCode -> m a
-throwDecompressError = throwM . DecompressError
+throwDecompressError
+  :: MonadThrow m
+  => C.ErrorCode
+  -> String -- ^ Description of the error
+  -> m a
+throwDecompressError = (throwM .) . DecompressError
 
 -- | The possible error cases when decompressing a stream.
-data DecompressException = DecompressError Stream.ErrorCode
+data DecompressException = DecompressError
+  Stream.ErrorCode
+  -- ^ Error code from liblzma
+  String
+  -- ^ Description of the error
   deriving (Eq, Show, Typeable)
 
 instance Exception DecompressException where
@@ -148,7 +157,8 @@ decompressIO = decompressStreamToIO . decompressStream
 
 decompressStream :: DecompressParams -> DecompressStream Stream ()
 decompressStream params = do
-  handleRet $ lift $ Stream.autoDecoder (decompressMemoryLimit params) mempty
+  handleRet "Failed to initialize a stream decoder" $
+    lift $ Stream.autoDecoder (decompressMemoryLimit params) mempty
   loop
   where
     loop = fillBuffers params () >>= drainBuffers
@@ -178,7 +188,7 @@ decompressStream params = do
           yield remaining
         Stream.Error errorCode -> do
           void $ finalizeStream 0
-          lift $ throwDecompressError errorCode
+          lift $ throwDecompressError errorCode "The stream decoder failed."
 
 ------------------------------------------------------------
 
@@ -300,7 +310,8 @@ seekableDecompressStream params index req0 = do
         (fromIntegral indexIterBlockTotalSize)
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
-      handleRet $ lift $ Stream.blockDecoder indexIter block filters
+      handleRet "Failed to initialize a block decoder" $
+        lift $ Stream.blockDecoder indexIter block filters
 
       req' <- drainBuffers iter isLastChunk
         (calculateSkipBytes req blockUncompPos)
@@ -369,7 +380,7 @@ seekableDecompressStream params index req0 = do
 
         Stream.Error errorCode -> do
           void $ finalizeStream skipBytes
-          lift $ throwDecompressError errorCode
+          lift $ throwDecompressError errorCode "The block decoder failed."
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
 -- position. If it doesn't have a position, find the next non-empty block.
@@ -527,7 +538,8 @@ decodeIndexStream fileSize = do
       pos <- lift ID.getPosition
       when (pos > 0) $ do
         index' <- parseIndex
-        handleRet $ liftIO $ C.lzma_index_cat index index'
+        handleRet "Failed to concatenate indicies." $
+          liftIO $ C.lzma_index_cat index index'
         loop index
 
 -- | Parse an index
@@ -537,7 +549,8 @@ parseIndex = do
   index <- decodeIndex 8192 -- FIXME: Set appropreate size
   decodeStreamHeader index
   checkIntegrity index
-  handleRet $ liftIO $ C.lzma_index_stream_padding index padding
+  handleRet "Failed to set stream padding" $
+    liftIO $ C.lzma_index_stream_padding index padding
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
 
@@ -565,9 +578,10 @@ decodeStreamFooter = loop 0
           loop padding'
         else do
           footer <- lift ID.getStreamFooter
-          handleRet $ liftIO $ do
-            let S.PS inFPtr _off _len = chunk
-            withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
+          handleRet "Failed to decode a stream footer." $
+            liftIO $ do
+              let S.PS inFPtr _off _len = chunk
+              withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
           version <- liftIO $ C.lzma_get_stream_flags_version footer
           unless (version ==  0) $
             lift $ throwM $ DecodeError C.OptionsError
@@ -657,7 +671,8 @@ decodeStreamHeader index = do
   chunk <- pread headerSize
   let S.PS inFPtr _off _len = chunk
   header <- lift ID.getStreamHeader
-  handleRet $ liftIO $ withForeignPtr inFPtr $ C.lzma_stream_header_decode header
+  handleRet "Failed to decode a stream header." $
+    liftIO $ withForeignPtr inFPtr $ C.lzma_stream_header_decode header
 
 checkIntegrity
   :: C.Index
@@ -665,10 +680,13 @@ checkIntegrity
 checkIntegrity index = do
   header <- lift ID.getStreamHeader
   footer <- lift ID.getStreamFooter
-  handleRet $ liftIO $ C.lzma_stream_flags_compare header footer
-  handleRet $ liftIO $ C.lzma_index_stream_flags index footer
+  handleRet "The stream header and the footer didn't agree." $
+    liftIO $ C.lzma_stream_flags_compare header footer
+  handleRet "Failed to set the footer to the index." $
+    liftIO $ C.lzma_index_stream_flags index footer
   padding <- lift ID.getStreamPadding
-  handleRet $ liftIO $ C.lzma_index_stream_padding index padding
+  handleRet "Failed to set stream padding to the index." $
+    liftIO $ C.lzma_index_stream_padding index padding
 
 indexDecodingToIO
   :: DecodeStream IndexDecoder a
