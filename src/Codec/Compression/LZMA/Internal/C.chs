@@ -126,7 +126,6 @@ module Codec.Compression.LZMA.Internal.C
   , Flags
   , tellNoCheckFlag, tellUnsupportedCheckFlag, tellAnyCheckFlag
   , concatenatedFlag
-  , ReservedEnum(..)
   -- ** Variable-length integer
   , VLI
   , vliUnknown
