@@ -476,29 +476,28 @@ runDecodeStream
 runDecodeStream h = runEffect . loop
   where
     loop (P.Request seekRequest next) = do
-      size <- case seekRequest of
+      chunk <- case seekRequest of
         PReadWithSize (fromIntegral -> pos) size -> do
           r <- liftIO $ try $ hSeek h AbsoluteSeek pos
           case r of
             Left e -> lift $ throwM (e :: IOException)
-            Right () -> return size
-        _ -> return L.defaultChunkSize
-      chunk <- liftIO $ hGetEnsureN h size
+            Right () -> lift $ hGetEnsureN h size
+        _ -> liftIO $ S.hGet h L.defaultChunkSize
       loop (next chunk)
     loop (P.Respond _ next) = loop (next ())
     loop (P.M m) = lift m >>= loop
     loop (P.Pure a) = return a
 
-hGetEnsureN :: Handle -> Int -> IO S.ByteString
+hGetEnsureN :: (MonadIO m, MonadThrow m) => Handle -> Int -> m S.ByteString
 hGetEnsureN h expectedLen = do
-  fp <- S.mallocByteString expectedLen
-  withForeignPtr fp $ \p -> do
-    actualLen <- hGetBuf h p expectedLen
-    if expectedLen <= actualLen
-      then return $ S.PS fp 0 expectedLen
-      else fail $ "hGetEnsureN: unexpected end of file (demanded " ++
-        show expectedLen ++ " bytes, but got " ++ show actualLen ++
-        " bytes)"
+  fp <- liftIO $ S.mallocByteString expectedLen
+  actualLen <- liftIO $ withForeignPtr fp $ \p -> hGetBuf h p expectedLen
+  if expectedLen <= actualLen
+    then return $ S.PS fp 0 expectedLen
+    else throwM $ userError $
+      "hGetEnsureN: unexpected end of file (demanded " ++
+      show expectedLen ++ " bytes, but got " ++ show actualLen ++
+      " bytes)"
 
 -- | Seek to an absolute position and ask for an input with given size.
 pread
