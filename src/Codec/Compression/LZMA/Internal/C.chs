@@ -207,8 +207,33 @@ deriving instance Show Stream
 newStream :: IO Stream
 newStream = do
   streamFPtr <- mallocForeignPtrBytes {# sizeof lzma_stream #}
+  withForeignPtr streamFPtr $ \p -> do
+    {# set lzma_stream.next_in #} p nullPtr
+    {# set lzma_stream.avail_in #} p 0
+    {# set lzma_stream.total_in #} p 0
+
+    {# set lzma_stream.next_out #} p nullPtr
+    {# set lzma_stream.avail_out #} p 0
+    {# set lzma_stream.total_out #} p 0
+
+    -- internal fields
+    {# set lzma_stream.internal #} p nullPtr
+    {# set lzma_stream.allocator #} p nullPtr
+    {# set lzma_stream.reserved_ptr1 #} p nullPtr
+    {# set lzma_stream.reserved_ptr2 #} p nullPtr
+    {# set lzma_stream.reserved_ptr3 #} p nullPtr
+    {# set lzma_stream.reserved_ptr4 #} p nullPtr
+    {# set lzma_stream.reserved_int1 #} p 0
+    {# set lzma_stream.reserved_int2 #} p 0
+    {# set lzma_stream.reserved_int3 #} p 0
+    {# set lzma_stream.reserved_int4 #} p 0
+    {# set lzma_stream.reserved_enum1 #} p $ fromReservedEnum ReservedEnum
+    {# set lzma_stream.reserved_enum2 #} p $ fromReservedEnum ReservedEnum
   addForeignPtrFinalizer finalize_stream streamFPtr
   return $ Stream streamFPtr
+  where
+    fromReservedEnum :: Integral a => ReservedEnum -> a
+    fromReservedEnum = fromIntegral . fromEnum
 
 lzma_get_stream_avail_in :: Stream -> IO Int
 lzma_get_stream_avail_in stream =
