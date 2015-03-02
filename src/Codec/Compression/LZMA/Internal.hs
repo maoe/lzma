@@ -579,7 +579,7 @@ decodeStreamFooter = loop 0
           "There is not enough data left to contain at least a stream header" ++
           "and a stream footer."
 
-      chunk <- pread footerSize
+      chunk@(S.PS inFPtr _ _) <- pread footerSize
       if isStreamPadding $ dropStreamPadding 2 chunk
         then do
           padding' <- lift $ skipStreamPaddings chunk 2 padding
@@ -587,13 +587,12 @@ decodeStreamFooter = loop 0
         else do
           footer <- lift ID.getStreamFooter
           handleRet "Failed to decode a stream footer." $
-            liftIO $ do
-              let S.PS inFPtr _off _len = chunk
-              withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
+            liftIO $ withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
           version <- liftIO $ C.lzma_get_stream_flags_version footer
           unless (version ==  0) $
             lift $ throwM $ DecodeError C.OptionsError
               "The stream footer specifies something that we don't support."
+          liftIO $ touchForeignPtr inFPtr
           return padding
 
 skipStreamPaddings
@@ -647,10 +646,9 @@ decodeIndex bufSize = do
       chunk <- pread inAvail
       lift $ ID.modifyPosition' (+ inAvail)
       let indexSize' = indexSize - inAvail
-      liftIO $ do
-        let S.PS inFPtr _offset _len = chunk
-        withForeignPtr inFPtr $ C.lzma_set_stream_next_in stream
-      ret <- liftIO $ C.lzma_code stream C.Run
+      ret <- liftIO $ withByteString chunk $ \inPtr -> do
+          C.lzma_set_stream_next_in stream inPtr
+          C.lzma_code stream C.Run
       case ret of
         C.Ok -> loop stream indexRef indexSize'
         C.Error C.BufError ->
@@ -677,10 +675,9 @@ decodeStreamHeader index = do
   blocksSize <- liftIO $ C.lzma_index_total_size index
   lift $ ID.modifyPosition' (subtract $ fromIntegral blocksSize)
   chunk <- pread headerSize
-  let S.PS inFPtr _off _len = chunk
   header <- lift ID.getStreamHeader
   handleRet "Failed to decode a stream header." $
-    liftIO $ withForeignPtr inFPtr $ C.lzma_stream_header_decode header
+    liftIO $ withByteString chunk $ C.lzma_stream_header_decode header
 
 checkIntegrity
   :: C.Index
@@ -712,3 +709,8 @@ indexDecodingToIO stream0 state0 header footer = go stream0 state0
       (state', stream') <- liftIO $ ID.runIndexDecoder m state header footer
       go stream' state'
     go (P.Pure a) _ =  P.Pure a
+
+withByteString :: S.ByteString -> (Ptr Word8 -> IO a) -> IO a
+withByteString (S.PS fptr off _len) f =
+    withForeignPtr fptr $ \ptr ->
+        f (advancePtr ptr off)
