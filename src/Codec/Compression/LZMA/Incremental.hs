@@ -22,6 +22,7 @@ module Codec.Compression.LZMA.Incremental
 
   , C.Index
   , I.decodeIndicies
+  , I.hasMagicBytes
 ) where
 
 import qualified Codec.Compression.LZMA.Internal as I
