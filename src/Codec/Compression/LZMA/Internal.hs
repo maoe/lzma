@@ -27,9 +27,10 @@ module Codec.Compression.LZMA.Internal
   , seekableDecompressIO
   , seekableDecompressStream
   -- *** Decoding indicies
-  , decodeIndicies
+  , decodeIndex
   , DecodeStream
   , runDecodeStream
+  , decodeIndexIO
   , decodeIndexStream
 
   -- * Types for incremental processing
@@ -60,6 +61,7 @@ import Control.Monad.Catch
 import Control.Monad.Trans
 import Pipes hiding (next, void)
 import Pipes.Core
+import Pipes.Safe ()
 import qualified Control.Monad.ST as S
 import qualified Control.Monad.ST.Lazy as L
 import qualified Data.ByteString as S
@@ -464,14 +466,21 @@ finalizeStream skipBytes = do
 -----------------------------------------------------------
 -- Index decoder
 
-decodeIndicies :: Handle -> IO (C.Index, C.VLI)
-decodeIndicies h = do
+decodeIndex :: Handle -> IO (C.Index, C.VLI)
+decodeIndex h = do
   size <- hFileSize h
-  C.allocaStreamFlags $ \header ->
-    C.allocaStreamFlags $ \footer ->
-      runDecodeStream h $ indexDecodingToIO
-        (decodeIndexStream (fromIntegral size))
-        ID.newIndexDecoderState header footer
+  runDecodeStream h $ decodeIndexIO (fromIntegral size)
+
+decodeIndexIO :: Size -> DecodeStream IO (C.Index, C.VLI)
+decodeIndexIO size = bracket acquire release $ \(header, footer) ->
+  indexDecodingToIO
+    (decodeIndexStream (fromIntegral size))
+    ID.newIndexDecoderState header footer
+  where
+    acquire = liftIO $ (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
+    release (header, footer) = liftIO $ do
+      C.freeStreamFlags header
+      C.freeStreamFlags footer
 
 runDecodeStream
   :: (MonadIO m, MonadThrow m)
@@ -541,7 +550,7 @@ decodeIndexStream
   -> DecodeStream IndexDecoder (C.Index, C.VLI)
 decodeIndexStream fileSize = do
   lift $ ID.setPosition $ fromIntegral fileSize
-  index <- parseIndex
+  index <- decodeIndex1
   loop index
   padding <- lift ID.getStreamPadding
   return (index, padding)
@@ -550,25 +559,25 @@ decodeIndexStream fileSize = do
     loop index = do
       pos <- lift ID.getPosition
       when (pos > 0) $ do
-        index' <- parseIndex
+        index' <- decodeIndex1
         handleRet "Failed to concatenate indicies." $
           liftIO $ C.lzma_index_cat index index'
         loop index
 
 -- | Parse an index
-parseIndex :: DecodeStream IndexDecoder C.Index
-parseIndex = do
-  padding <- decodeStreamFooter
-  index <- decodeIndex 8192 -- FIXME: Set appropreate size
-  decodeStreamHeader index
+decodeIndex1 :: DecodeStream IndexDecoder C.Index
+decodeIndex1 = do
+  padding <- parseStreamFooter
+  index <- parseIndex 8192 -- FIXME: Set appropreate size
+  parseStreamHeader index
   checkIntegrity index
   handleRet "Failed to set stream padding" $
     liftIO $ C.lzma_index_stream_padding index padding
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
 
-decodeStreamFooter :: DecodeStream IndexDecoder C.VLI
-decodeStreamFooter = loop 0
+parseStreamFooter :: DecodeStream IndexDecoder C.VLI
+parseStreamFooter = loop 0
   where
     loop padding = do
       pos <- lift ID.getPosition
@@ -628,10 +637,10 @@ getIndexSize = do
   liftIO $ C.lzma_stream_flags_backward_size footer
 
 -- | Decode a stream index.
-decodeIndex
+parseIndex
   :: C.VLI -- ^ Buffer size
   -> DecodeStream IndexDecoder C.Index
-decodeIndex bufSize = do
+parseIndex bufSize = do
   indexSize <- lift getIndexSize
   -- Set posision to the beginning of the index.
   lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
@@ -671,10 +680,10 @@ decodeIndex bufSize = do
 
 -- | Decode the stream header and check that its stream flags match the stream
 -- footer.
-decodeStreamHeader
+parseStreamHeader
   :: C.Index
   -> DecodeStream IndexDecoder ()
-decodeStreamHeader index = do
+parseStreamHeader index = do
   indexSize <- lift getIndexSize
   lift $ ID.modifyPosition' (subtract $ fromIntegral indexSize + headerSize)
   blocksSize <- liftIO $ C.lzma_index_total_size index

@@ -21,7 +21,9 @@ module Codec.Compression.LZMA.Incremental
   , I.seekableDecompressIO
 
   , C.Index
-  , I.decodeIndicies
+  , I.DecodeStream
+  , I.decodeIndex
+  , I.decodeIndexIO
   , I.hasMagicBytes
 ) where
 
