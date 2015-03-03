@@ -142,9 +142,9 @@ throwDecompressError = (throwM .) . DecompressError
 -- | The possible error cases when decompressing a stream.
 data DecompressException = DecompressError
   Stream.ErrorCode
-  -- ^ Error code from liblzma
+  --- ^ Error code from liblzma
   String
-  -- ^ Description of the error
+  --- ^ Description of the error
   deriving (Eq, Show, Typeable)
 
 instance Exception DecompressException where
@@ -519,9 +519,9 @@ type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
 -- | Seek operation failure in downstream.
 data DecodeException = DecodeError
   C.ErrorCode
-  -- ^ Error code from liblzma
+  --- ^ Error code from liblzma
   String
-  -- ^ Description of the error
+  --- ^ Description of the error
   deriving (Show, Typeable)
 
 instance Exception DecodeException where
