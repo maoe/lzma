@@ -1,7 +1,12 @@
-// #include <stdio.h>
 #include <lzma.h>
 
-void finalize_index(lzma_index *i)
+void initialize_stream(lzma_stream *stream)
 {
-	lzma_index_end(i, NULL);
+	lzma_stream tmp = LZMA_STREAM_INIT;
+	*stream = tmp;
+}
+
+void finalize_index(lzma_index *index)
+{
+	lzma_index_end(index, NULL);
 }
