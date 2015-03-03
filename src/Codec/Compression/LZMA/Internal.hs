@@ -719,8 +719,11 @@ indexDecodingToIO stream0 state0 header footer = go stream0 state0
 
 hasMagicBytes :: Monad m => DecodeStream m Bool
 hasMagicBytes = do
-  chunk <- request $ PReadWithSize (0 :: Position 'Compressed) 6
-  return $ chunk == "\xfd\x37\x7a\x58\x5a\x00"
+  chunk <- request $ PReadWithSize beginning 6
+  return $ chunk == "\xfd\&7zXZ\x00" -- \& is an empty string
+  where
+    beginning :: Position 'Compressed
+    beginning = 0
 
 -----------------------------------------------------------
 
