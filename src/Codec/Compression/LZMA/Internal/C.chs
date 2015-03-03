@@ -21,6 +21,8 @@ module Codec.Compression.LZMA.Internal.C
   -- * Stream header and footer
   , StreamFlags
   , allocaStreamFlags
+  , mallocStreamFlags
+  , freeStreamFlags
   , lzma_get_stream_flags_check
   , lzma_get_stream_flags_version
   , lzma_stream_flags_backward_size
@@ -445,6 +447,12 @@ deriving instance Show StreamFlags
 
 allocaStreamFlags :: (StreamFlags -> IO a) -> IO a
 allocaStreamFlags f = alloca (f . StreamFlags)
+
+mallocStreamFlags :: IO StreamFlags
+mallocStreamFlags = StreamFlags <$> malloc
+
+freeStreamFlags :: StreamFlags -> IO ()
+freeStreamFlags (StreamFlags ptr) = free ptr
 
 lzma_get_stream_flags_check :: StreamFlags -> IO Check
 lzma_get_stream_flags_check flags = do

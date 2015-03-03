@@ -24,18 +24,19 @@ import Text.Printf
 main :: IO ()
 main = do
   file:args <- getArgs
-  (index, _padding) <- withFile file ReadMode decodeIndicies
-  withFile file ReadMode $ \h -> runEffect $
-    fromHandleRandom h +>>
-    seekableDecompressIO defaultDecompressParams index +>>
-    case args of
-      [] -> seekThenReadToEnd 0
-      [pos] -> seekThenReadToEnd (read pos)
-      positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
+  withFile file ReadMode $ \h -> do
+    size <- hFileSize h
+    runEffect $
+      fromHandleRandom h +>> do
+        (index, _padding) <- decodeIndexIO (fromIntegral size)
+        seekableDecompressIO defaultDecompressParams index +>>
+          case args of
+            [] -> seekThenReadToEnd 0
+            [pos] -> seekThenReadToEnd (read pos)
+            positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
   where
     integerToPos :: Integer -> Position 'Uncompressed
     integerToPos = fromIntegral
-
 
 fromHandleRandom
   :: MonadIO m

@@ -18,7 +18,7 @@ import Text.Printf
 main :: IO ()
 main = do
   file:_ <- getArgs
-  (index, padding) <- withFile file ReadMode decodeIndicies
+  (index, padding) <- withFile file ReadMode decodeIndex
   printInfoAdvanced index padding
 
 printInfoAdvanced
