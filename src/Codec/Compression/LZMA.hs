@@ -13,7 +13,13 @@ module Codec.Compression.LZMA
   , I.defaultDecompressParams
   , I.decompressBufferSize
   , I.decompressMemoryLimit
+
+  -- * Utils
+  , isXzFile
+  , isXzHandle
   ) where
+import System.IO (Handle, IOMode(..), withFile)
+
 import qualified Data.ByteString.Lazy as L
 
 import qualified Codec.Compression.LZMA.Internal as I
@@ -29,3 +35,9 @@ decompress = decompressWith I.defaultDecompressParams
 --
 decompressWith :: I.DecompressParams -> L.ByteString -> L.ByteString
 decompressWith = I.decompress
+
+isXzFile :: FilePath -> IO Bool
+isXzFile path = withFile path ReadMode isXzHandle
+
+isXzHandle :: Handle -> IO Bool
+isXzHandle h = I.runDecodeStream h I.hasMagicBytes
