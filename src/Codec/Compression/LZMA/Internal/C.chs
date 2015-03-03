@@ -12,6 +12,11 @@ module Codec.Compression.LZMA.Internal.C
   , newStream
 
   -- ** Getters and settters
+  , getStreamAvailIn
+  , setStreamAvailIn
+  , setStreamAvailOut
+  , setStreamNextIn
+  , setStreamNextOut
   , lzma_get_stream_avail_in
   , lzma_set_stream_avail_in
   , lzma_set_stream_avail_out
@@ -215,25 +220,45 @@ newStream = do
   addForeignPtrFinalizer finalize_stream fptr
   return $ Stream fptr
 
-lzma_get_stream_avail_in :: Stream -> IO Int
-lzma_get_stream_avail_in stream =
+getStreamAvailIn :: Stream -> IO Int
+getStreamAvailIn stream =
   fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
 
-lzma_set_stream_avail_in :: Stream -> Int -> IO ()
-lzma_set_stream_avail_in stream inAvail = withStream stream $ \p ->
+setStreamAvailIn :: Stream -> Int -> IO ()
+setStreamAvailIn stream inAvail = withStream stream $ \p ->
   {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
-lzma_set_stream_avail_out :: Stream -> Int -> IO ()
-lzma_set_stream_avail_out stream outAvail = withStream stream $ \p ->
+setStreamAvailOut :: Stream -> Int -> IO ()
+setStreamAvailOut stream outAvail = withStream stream $ \p ->
   {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
 
-lzma_set_stream_next_in :: Stream -> Ptr Word8 -> IO ()
-lzma_set_stream_next_in stream inNext = withStream stream $ \p ->
+setStreamNextIn :: Stream -> Ptr Word8 -> IO ()
+setStreamNextIn stream inNext = withStream stream $ \p ->
   {# set lzma_stream.next_in #} p (castPtr inNext)
 
-lzma_set_stream_next_out :: Stream -> Ptr Word8 -> IO ()
-lzma_set_stream_next_out stream outNext = withStream stream $ \p ->
+setStreamNextOut :: Stream -> Ptr Word8 -> IO ()
+setStreamNextOut stream outNext = withStream stream $ \p ->
   {# set lzma_stream.next_out #} p (castPtr outNext)
+
+{-# DEPRECATED lzma_get_stream_avail_in "Use 'getStreamAvailIn'" #-}
+lzma_get_stream_avail_in :: Stream -> IO Int
+lzma_get_stream_avail_in = getStreamAvailIn
+
+{-# DEPRECATED lzma_set_stream_avail_in "Use 'setStreamAvailIn'" #-}
+lzma_set_stream_avail_in :: Stream -> Int -> IO ()
+lzma_set_stream_avail_in = setStreamAvailIn
+
+{-# DEPRECATED lzma_set_stream_avail_out "Use 'setStreamAvailOut'" #-}
+lzma_set_stream_avail_out :: Stream -> Int -> IO ()
+lzma_set_stream_avail_out = setStreamAvailOut
+
+{-# DEPRECATED lzma_set_stream_next_in "Use 'setStreamNextIn'" #-}
+lzma_set_stream_next_in :: Stream -> Ptr Word8 -> IO ()
+lzma_set_stream_next_in = setStreamNextIn
+
+{-# DEPRECATED lzma_set_stream_next_out "Use 'setStreamNextOut'" #-}
+lzma_set_stream_next_out :: Stream -> Ptr Word8 -> IO ()
+lzma_set_stream_next_out = setStreamNextOut
 
 -- | The action argument for 'lzma_code'.
 --
