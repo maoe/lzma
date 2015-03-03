@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns #-}
 module Codec.Compression.LZMA.Internal
@@ -28,6 +29,7 @@ module Codec.Compression.LZMA.Internal
   -- *** Decoding indicies
   , decodeIndicies
   , DecodeStream
+  , runDecodeStream
   , decodeIndexStream
 
   -- * Types for incremental processing
@@ -40,6 +42,9 @@ module Codec.Compression.LZMA.Internal
   , SomeLZMAException(..)
   , DecompressException(..)
   , DecodeException(..)
+
+  -- * Utils
+  , hasMagicBytes
   ) where
 import Control.Applicative
 import Control.Exception (IOException, assert)
@@ -709,6 +714,15 @@ indexDecodingToIO stream0 state0 header footer = go stream0 state0
       (state', stream') <- liftIO $ ID.runIndexDecoder m state header footer
       go stream' state'
     go (P.Pure a) _ =  P.Pure a
+
+-----------------------------------------------------------
+
+hasMagicBytes :: Monad m => DecodeStream m Bool
+hasMagicBytes = do
+  chunk <- request $ PReadWithSize (0 :: Position 'Compressed) 6
+  return $ chunk == "\xfd\x37\x7a\x58\x5a\x00"
+
+-----------------------------------------------------------
 
 withByteString :: S.ByteString -> (Ptr Word8 -> IO a) -> IO a
 withByteString (S.PS fptr off _len) f =
