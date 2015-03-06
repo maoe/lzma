@@ -578,25 +578,21 @@ parseStreamFooter :: DecodeStream IndexDecoder C.VLI
 parseStreamFooter = loop 0
   where
     loop padding = do
-      do
-        pos <- lift ID.getPosition
-        when (pos < 2 * headerSize) $
-          lift $ throwM $ DecodeError C.DataError
-            "This file is too small to be a valid .xz file."
-      pos <- lift $ do
-        ID.modifyPosition' (subtract footerSize)
-        ID.getPosition
-      when (pos < footerSize) $
-        lift $ throwM $ DecodeError C.DataError $
-          "There is not enough data left to contain at least a stream header" ++
-          "and a stream footer."
+      endPos <- lift ID.getPosition
+      when (endPos < 2 * headerSize) $
+        lift $ throwM $ DecodeError C.DataError
+          "This file is too small to be a valid .xz file."
 
-      chunk@(S.PS inFPtr _ _) <- pread pos footerSize
-      if isStreamPadding $ dropStreamPadding 2 chunk
+      chunk@(S.PS inFPtr inOffset inLength) <-
+        pread (endPos - footerSize) footerSize
+      assert (inOffset == 0 && inLength == footerSize) $ return ()
+
+      if containsStreamPadding chunk
         then do
-          padding' <- lift $ skipStreamPaddings chunk 2 padding
-          loop padding'
+          padding' <- lift $ skipStreamPadding chunk
+          loop $! padding + padding'
         else do
+          lift $ ID.setPosition $ endPos - footerSize
           footer <- lift ID.getStreamFooter
           handleRet "Failed to decode a stream footer." $
             liftIO $ withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
@@ -607,27 +603,16 @@ parseStreamFooter = loop 0
           liftIO $ touchForeignPtr inFPtr
           return padding
 
-skipStreamPaddings
-  :: S.ByteString
-  -- ^ Input chunk
-  -> Int
-  -- ^ Index
-  -> C.VLI
-  -> IndexDecoder C.VLI
-skipStreamPaddings chunk = go
+skipStreamPadding :: S.ByteString -> IndexDecoder C.VLI
+skipStreamPadding chunk =
+  assert (paddingLength `mod` 4 == 0) $ do
+    ID.modifyPosition' (subtract $ fromIntegral paddingLength)
+    return $! fromIntegral paddingLength
   where
-    go !i !padding =
-      if i >= 0 && isStreamPadding (dropStreamPadding i chunk)
-        then do
-          ID.modifyPosition' (subtract 4)
-          go (i - 1) (padding + 4)
-        else return padding
+    (_, S.length -> paddingLength) = S.spanEnd (== 0) chunk
 
-isStreamPadding :: S.ByteString -> Bool
-isStreamPadding = S.all (== 0) . S.take 4
-
-dropStreamPadding :: Int -> S.ByteString -> S.ByteString
-dropStreamPadding n = S.drop (4*n)
+containsStreamPadding :: S.ByteString -> Bool
+containsStreamPadding = S.all (== 0) . S.take 4 . S.drop 8
 
 getIndexSize :: IndexDecoder C.VLI
 getIndexSize = do
