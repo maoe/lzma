@@ -32,7 +32,7 @@ main = do
           case args of
             [] -> seekThenReadToEnd 0
             [pos] -> seekThenReadToEnd (read pos)
-            positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
+            positions -> mapM_ (seekAndDump . integerToPos . read) positions
   where
     integerToPos :: Integer -> Position 'Uncompressed
     integerToPos = fromIntegral

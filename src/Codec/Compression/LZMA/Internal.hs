@@ -470,10 +470,10 @@ decodeIndex h = do
   runDecodeStream h $ decodeIndexIO (fromIntegral size)
 
 decodeIndexIO :: Size -> DecodeStream IO (C.Index, C.VLI)
-decodeIndexIO size = bracket acquire release $ \(header, footer) ->
+decodeIndexIO size = bracket acquire release $ uncurry $
   indexDecodingToIO
     (decodeIndexStream (fromIntegral size))
-    ID.newIndexDecoderState header footer
+    ID.newIndexDecoderState
   where
     acquire = liftIO $ (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
     release (header, footer) = liftIO $ do
@@ -654,15 +654,15 @@ parseIndex bufSize = do
     loop stream indexRef indexSize = do
       let inAvail :: Integral a => a
           inAvail = fromIntegral $ min bufSize indexSize
-      liftIO $ C.lzma_set_stream_avail_in stream inAvail
+      liftIO $ C.setStreamAvailIn stream inAvail
       chunk <- do
         pos <- lift ID.getPosition
         pread pos inAvail
       lift $ ID.modifyPosition' (+ inAvail)
       let indexSize' = indexSize - inAvail
       ret <- liftIO $ withByteString chunk $ \inPtr -> do
-          C.lzma_set_stream_next_in stream inPtr
-          C.lzma_code stream C.Run
+        C.setStreamNextIn stream inPtr
+        C.lzma_code stream C.Run
       case ret of
         C.Ok -> loop stream indexRef indexSize'
         C.Error C.BufError ->
@@ -672,7 +672,7 @@ parseIndex bufSize = do
         C.Error code ->
           lift $ throwM $ DecodeError code "The index decoder faild."
         C.StreamEnd -> do
-          inAvail' <- liftIO $ C.lzma_get_stream_avail_in stream
+          inAvail' <- liftIO $ C.getStreamAvailIn stream
           unless (indexSize' == 0 && inAvail' == 0) $
             lift $ throwM $ DecodeError C.DataError $
               "The index decoder didn't consume as much input as indicated " ++
