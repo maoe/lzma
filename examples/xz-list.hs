@@ -9,7 +9,8 @@ import Foreign
 import System.Environment
 import System.IO
 
-import Codec.Compression.LZMA.Index
+import Codec.Compression.LZMA.Internal
+import Codec.Compression.LZMA.Internal.C (Index, IndexIter(..))
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf
@@ -17,10 +18,13 @@ import Text.Printf
 main :: IO ()
 main = do
   file:_ <- getArgs
-  (index, padding) <- withFile file ReadMode decodeIndicies
+  (index, padding) <- withFile file ReadMode decodeIndex
   printInfoAdvanced index padding
 
-printInfoAdvanced :: Index -> StreamPadding -> IO ()
+printInfoAdvanced
+  :: Index
+  -> C.VLI -- ^ Stream padding
+  -> IO ()
 printInfoAdvanced index padding = do
   streamCount <- C.lzma_index_stream_count index
   blockCount <- C.lzma_index_block_count index

@@ -9,7 +9,6 @@ module Codec.Compression.LZMA.Internal.Stream
   , runStream
   , State
   , newState
-  , unsafeLiftIO
 
   -- ** High level API
   , compress
@@ -42,9 +41,10 @@ module Codec.Compression.LZMA.Internal.Stream
   , outputBufferSpaceRemaining
 
   -- * Exceptions
-  , M.SomeStreamException(..)
-  , M.streamExceptionToException
-  , M.streamExceptionFromException
+  , SomeLZMAException(..)
+  , lzmaExceptionToException
+  , lzmaExceptionFromException
+  , LZMAException(..)
 
 #ifdef DEBUG
   -- * Debugging tools
@@ -55,23 +55,25 @@ module Codec.Compression.LZMA.Internal.Stream
   ) where
 import Control.Applicative
 import Control.Exception (assert)
-import Control.Monad.ST
-import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Foreign
 import Foreign.C
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 
+import Control.Monad.Catch
+import Control.Monad.ST
+import Control.Monad.ST.Unsafe (unsafeIOToST)
+import Control.Monad.Trans (liftIO)
 import Data.Vector.Storable.Mutable (IOVector)
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
 {# import Codec.Compression.LZMA.Internal.C #}
+import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.Stream.Monad as M
 
 #ifdef DEBUG
 import Debug.Trace
 import System.IO (hPrint, hPutStrLn, stderr)
 #endif
-
 
 #include <lzma.h>
 
@@ -89,7 +91,7 @@ pushInputBuffer inBuf inOffset inLen = do
   assert (inAvail == 0) $ return ()
 
   oldInBuf <- getInBuf
-  unsafeLiftIO $ touchForeignPtr oldInBuf
+  liftIO $ touchForeignPtr oldInBuf
 
   setInBuf inBuf
   setInAvail inLen
@@ -118,7 +120,7 @@ pushOutputBuffer outBuf outOffset outLen = do
   assert (outAvail == 0) $ return ()
 
   oldOutBuf <- getOutBuf
-  unsafeLiftIO $ touchForeignPtr oldOutBuf
+  liftIO $ touchForeignPtr oldOutBuf
 
   setOutBuf outBuf
   setOutFree outLen
@@ -160,7 +162,7 @@ flushBuffers = do
   setOutFree 0
   setOutAvail 0
   setOutOffset 0
-  nullFPtr <- unsafeLiftIO $ newForeignPtr_ nullPtr
+  nullFPtr <- liftIO $ newForeignPtr_ nullPtr
   setOutBuf nullFPtr
 
 ------------------------------------------------------------
@@ -199,45 +201,13 @@ data State s = State
 newState :: ST s (State s)
 newState = unsafeIOToST $ do
   stream <- newStream
-
-  -- TODO: Use LZMA_STREAM_INIT to initialize these fields
-  withStream stream $ \p -> do
-    {# set lzma_stream.next_in #} p nullPtr
-    {# set lzma_stream.avail_in #} p 0
-    {# set lzma_stream.total_in #} p 0
-
-    {# set lzma_stream.next_out #} p nullPtr
-    {# set lzma_stream.avail_out #} p 0
-    {# set lzma_stream.total_out #} p 0
-
-    -- internal fields
-    {# set lzma_stream.internal #} p nullPtr
-    {# set lzma_stream.allocator #} p $ maybeToAllocator Nothing
-    {# set lzma_stream.reserved_ptr1 #} p nullPtr
-    {# set lzma_stream.reserved_ptr2 #} p nullPtr
-    {# set lzma_stream.reserved_ptr3 #} p nullPtr
-    {# set lzma_stream.reserved_ptr4 #} p nullPtr
-    {# set lzma_stream.reserved_int1 #} p 0
-    {# set lzma_stream.reserved_int2 #} p 0
-    {# set lzma_stream.reserved_int3 #} p 0
-    {# set lzma_stream.reserved_int4 #} p 0
-    {# set lzma_stream.reserved_enum1 #} p $ fromReservedEnum ReservedEnum
-    {# set lzma_stream.reserved_enum2 #} p $ fromReservedEnum ReservedEnum
   return $ State stream S.nullForeignPtr S.nullForeignPtr 0 0
-  where
-    fromReservedEnum :: Integral a => ReservedEnum -> a
-    fromReservedEnum = fromIntegral . fromEnum
 
 runStream :: M.Stream a -> State s -> ST s (a, State s)
 runStream (M.Stream m) (State {..}) = unsafeIOToST $ do
   (inBuf, outBuf, outOff, outLen, a) <-
     m stateStream stateInBuf stateOutBuf stateOutOffset stateOutLength
   return (a, State stateStream inBuf outBuf outOff outLen)
-
-unsafeLiftIO :: IO a -> M.Stream a
-unsafeLiftIO m = M.Stream $ \_stream inBuf outBuf outOffset outLength -> do
-  a <- m
-  return (inBuf, outBuf, outOffset, outLength, a)
 
 getStream :: M.Stream Stream
 getStream = M.Stream $ \stream inBuf outBuf outOffset outLength ->
@@ -275,17 +245,12 @@ setOutAvail :: Int -> M.Stream ()
 setOutAvail outLength = M.Stream $ \_stream inBuf outBuf outOffset _ ->
   return (inBuf, outBuf, outOffset, outLength, ())
 
-getAllocator :: M.Stream (Maybe Allocator)
-getAllocator = do
-  allocator <- withStreamPtr {# get lzma_stream.allocator #}
-  return $ if allocator == nullAllocator then Nothing else Just allocator
-
 ------------------------------------------------------------
 
 withStreamPtr :: (Ptr Stream -> IO a) -> M.Stream a
 withStreamPtr f = do
   stream <- getStream
-  unsafeLiftIO $ withStream stream f
+  liftIO $ withStream stream f
 
 getInAvail :: M.Stream Int
 getInAvail = do
@@ -310,8 +275,10 @@ setOutFree :: Int -> M.Stream ()
 setOutFree n = withStreamPtr $ \p ->
   {# set lzma_stream.avail_out #} p (fromIntegral n)
 
+#if DEBUG
 getOutNext :: M.Stream (Ptr Word8)
 getOutNext = castPtr <$> withStreamPtr {# get lzma_stream.next_out #}
+#endif
 
 setOutNext :: Ptr Word8 -> M.Stream ()
 setOutNext p' = withStreamPtr $ \p ->
@@ -338,7 +305,7 @@ easyEncoder
   -> M.Stream Ret
 easyEncoder preset check = do
   s <- getStream
-  unsafeLiftIO $ lzma_easy_encoder s preset check
+  liftIO $ lzma_easy_encoder s preset check
 
 -- | Decode .xz Streams and .lzma files with autodetection.
 
@@ -354,7 +321,7 @@ autoDecoder
   -> M.Stream Ret
 autoDecoder memLimit flags = do
   s <- getStream
-  unsafeLiftIO $ lzma_auto_decoder s memLimit flags
+  liftIO $ lzma_auto_decoder s memLimit flags
 
 -- | Encode or decode data.
 --
@@ -368,11 +335,11 @@ code action = do
   assert (not (outNext == nullPtr && outFree > 0)) $ return ()
 #endif
   s <- getStream
-  unsafeLiftIO $ lzma_code s action
+  liftIO $ lzma_code s action
 
 -- | Free memory allocated for the coder data structures.
 end :: M.Stream ()
-end = getStream >>= unsafeLiftIO . lzma_end
+end = getStream >>= liftIO . lzma_end
 
 blockDecoder :: IndexIter -> Block -> IOVector Filter -> M.Stream Ret
 blockDecoder IndexIter {..} block filters = do
@@ -381,7 +348,7 @@ blockDecoder IndexIter {..} block filters = do
 
   inNext <- getInNext
 
-  unsafeLiftIO $ do
+  liftIO $ do
     lzma_set_block_version block 0
     lzma_set_block_filters block filters
 
@@ -391,21 +358,25 @@ blockDecoder IndexIter {..} block filters = do
     firstByte <- peek inNext
     lzma_set_block_header_size block $ lzma_block_header_size_decode firstByte
 
-  stream <- getStream
-  allocator <- getAllocator
   inAvail <- getInAvail
-  unsafeLiftIO $ lzma_block_header_decode block allocator inNext
+  handleRet $ liftIO $ lzma_block_header_decode block inNext
 
-  unsafeLiftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
+  handleRet $
+    liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
 
-  blockHeaderSize <- unsafeLiftIO $ do
-    lzma_block_header_size block
-    lzma_get_block_header_size block
+  blockHeaderSize <- liftIO $ lzma_get_block_header_size block
 
   setInNext $ inNext `advancePtr` fromIntegral blockHeaderSize
   setInAvail $ inAvail - fromIntegral blockHeaderSize
 
-  unsafeLiftIO $ lzma_block_decoder stream block
+  stream <- getStream
+  liftIO $ lzma_block_decoder stream block
+  where
+    handleRet m = do
+      ret <- m
+      case ret of
+        Error errorCode -> throwM (LZMAErrorCode errorCode)
+        _ -> return ()
 
 ------------------------------------------------------------
 -- Debugging tools
@@ -413,7 +384,7 @@ blockDecoder IndexIter {..} block filters = do
 #ifdef DEBUG
 
 debug :: Show a => a -> M.Stream ()
-debug = unsafeLiftIO . hPrint stderr
+debug = liftIO . hPrint stderr
 
 dump :: String -> M.Stream ()
 dump label = do
@@ -428,9 +399,9 @@ dump label = do
   inTotal <- withStreamPtr {# get lzma_stream.total_in #}
   outTotal <- withStreamPtr {# get lzma_stream.total_out #}
 
-  unsafeLiftIO $ hPutStrLn stderr $
-    label ++ "\n" ++
-    "M.Stream {\n" ++
+  liftIO $ hPutStrLn stderr $
+    label ++ ": " ++
+    "Stream {\n" ++
     "  inNext    = " ++ show inNext    ++ ",\n" ++
     "  inAvail   = " ++ show inAvail   ++ ",\n" ++
     "\n" ++

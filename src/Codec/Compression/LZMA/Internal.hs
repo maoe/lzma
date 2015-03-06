@@ -2,11 +2,14 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ViewPatterns #-}
 module Codec.Compression.LZMA.Internal
-  ( -- * Decompression
+  (
+  -- * Decompression
     DecompressParams(..)
   , defaultDecompressParams
 
@@ -14,27 +17,51 @@ module Codec.Compression.LZMA.Internal
   , decompress
 
   -- ** Incremental processing
-  -- *** Decompression
-  , DecompressStream, DecompressError(..)
+  -- *** Sequential decompression
+  , DecompressStream
   , decompressST
   , decompressIO
-  -- , decompressStream
-  -- ** Random access
-  , IndexedDecompressStream
-  , indexedDecompressIO
+  , decompressStream
+  -- *** Decompression with random access support
+  , SeekableDecompressStream
+  , seekableDecompressIO
+  , seekableDecompressStream
+  -- *** Decoding indicies
+  , decodeIndex
+  , DecodeStream
+  , runDecodeStream
+  , decodeIndexIO
+  , decodeIndexStream
+
+  -- * Types for incremental processing
+  , ReadRequest(..)
+  , Position
+  , Compression(..)
+  , Size
+
+  -- * Exceptions
+  , SomeLZMAException(..)
+  , DecompressException(..)
+  , DecodeException(..)
+
+  -- * Utils
+  , hasMagicBytes
   ) where
 import Control.Applicative
-import Control.Exception (assert)
+import Control.Exception (IOException, assert)
 import Control.Monad
 import Data.Maybe (fromMaybe)
 import Data.Monoid
 import Data.Typeable (Typeable)
 import Data.Word
 import Foreign hiding (void)
+import System.IO
 
 import Control.Monad.Catch
+import Control.Monad.Trans
 import Pipes hiding (next, void)
 import Pipes.Core
+import Pipes.Safe ()
 import qualified Control.Monad.ST as S
 import qualified Control.Monad.ST.Lazy as L
 import qualified Data.ByteString as S
@@ -43,10 +70,12 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Internal as L
 import qualified Pipes.Internal as P
 
-import Codec.Compression.LZMA.Internal.Index
+import Codec.Compression.LZMA.Internal.IndexDecoder (IndexDecoder)
 import Codec.Compression.LZMA.Internal.Stream (Stream)
-import qualified Codec.Compression.LZMA.Internal.Stream as Stream
+import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.C as C
+import qualified Codec.Compression.LZMA.Internal.IndexDecoder as ID
+import qualified Codec.Compression.LZMA.Internal.Stream as Stream
 
 #if DEBUG
 import Debug.Trace
@@ -71,8 +100,11 @@ data DecompressParams = DecompressParams
   -- be converted to a strict 'S.ByteString' in @O(1)@ time using
   -- @'S.concat' . 'L.toChunks'@.
   , decompressMemoryLimit :: !Word64
+  -- ^
   }
 
+-- | The default set of parameters for decompresssion. This is typically used
+-- with the 'decompressWith' function with specific parameters overridden.
 defaultDecompressParams :: DecompressParams
 defaultDecompressParams = DecompressParams
   { decompressBufferSize = defaultDecompressBufferSize
@@ -93,25 +125,33 @@ type DecompressStream = Pipe S.ByteString S.ByteString
 
 handleRet
   :: (MonadTrans t, Monad (t m), MonadThrow m)
-  => t m C.Ret
+  => String -- ^ Description of an error if exists
+  -> t m C.Ret
   -> t m ()
-handleRet m = do
+handleRet reason m = do
   ret <- m
-  unless (ret == C.Ok) $ throwStreamError $ DecompressError C.ProgError
+  case ret of
+    C.Error code -> lift $ throwDecompressError code reason
+    _ -> return ()
 
-throwStreamError
-  :: (MonadTrans t, MonadThrow m, Exception e)
-  => e -- ^ Exception to throw
-  -> t m a
-throwStreamError = lift . throwM . Stream.SomeStreamException
+throwDecompressError
+  :: MonadThrow m
+  => C.ErrorCode
+  -> String -- ^ Description of the error
+  -> m a
+throwDecompressError = (throwM .) . DecompressError
 
 -- | The possible error cases when decompressing a stream.
-data DecompressError = DecompressError Stream.ErrorCode
+data DecompressException = DecompressError
+  Stream.ErrorCode
+  --- ^ Error code from liblzma
+  String
+  --- ^ Description of the error
   deriving (Eq, Show, Typeable)
 
-instance Exception DecompressError where
-  toException = Stream.streamExceptionToException
-  fromException = Stream.streamExceptionFromException
+instance Exception DecompressException where
+  toException = Stream.lzmaExceptionToException
+  fromException = Stream.lzmaExceptionFromException
 
 decompress :: DecompressParams -> L.ByteString -> L.ByteString
 decompress = decompressStreamToLBS . decompressStream
@@ -124,7 +164,8 @@ decompressIO = decompressStreamToIO . decompressStream
 
 decompressStream :: DecompressParams -> DecompressStream Stream ()
 decompressStream params = do
-  handleRet $ lift $ Stream.autoDecoder (decompressMemoryLimit params) mempty
+  handleRet "Failed to initialize a stream decoder" $
+    lift $ Stream.autoDecoder (decompressMemoryLimit params) mempty
   loop
   where
     loop = fillBuffers params () >>= drainBuffers
@@ -154,7 +195,7 @@ decompressStream params = do
           yield remaining
         Stream.Error code -> do
           void $ finalizeStream 0
-          throwStreamError $ DecompressError code
+          lift $ throwDecompressError code "The stream decoder failed."
 
 ------------------------------------------------------------
 
@@ -216,24 +257,33 @@ decompressStreamToIO stream = do
 
 ------------------------------------------------------------
 
-type IndexedDecompressStream = Proxy
+-- | The unfolding of the decompression process with random seek support.
+--
+-- Downstream demands uncompressed bytes from a specific position using
+-- 'ReadRequest's. 'SeekableDecompressStream' translates them to compressed
+-- position using 'Index' and sends them to upstream.
+type SeekableDecompressStream = Proxy
   (ReadRequest 'Compressed) S.ByteString
   (ReadRequest 'Uncompressed) S.ByteString
 
-indexedDecompressIO
+seekableDecompressIO
   :: DecompressParams
-  -> Index
+  -> C.Index
+  -- ^ Index of the stream
   -> ReadRequest 'Uncompressed
-  -> IndexedDecompressStream IO ()
-indexedDecompressIO params index =
-  decompressStreamToIO . indexedDecompressStream params index
+  -- ^ Initial request
+  -> SeekableDecompressStream IO ()
+seekableDecompressIO params index =
+  decompressStreamToIO . seekableDecompressStream params index
 
-indexedDecompressStream
+seekableDecompressStream
   :: DecompressParams
-  -> Index
+  -> C.Index
+  -- ^ Index for the stream
   -> ReadRequest 'Uncompressed
-  -> IndexedDecompressStream Stream ()
-indexedDecompressStream params index req0 = do
+  -- ^ Initial request
+  -> SeekableDecompressStream Stream ()
+seekableDecompressStream params index req0 = do
   iter <- liftIO $ C.lzma_index_iter_init index
   decodeLoop iter req0
   liftIO $ C.touchIndex index
@@ -248,13 +298,17 @@ indexedDecompressStream params index req0 = do
     decodeBlock
       :: C.IndexIterPtr
       -> ReadRequest 'Uncompressed
-      -> IndexedDecompressStream Stream (ReadRequest 'Uncompressed)
+      -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     decodeBlock iter req = do
       lift Stream.flushBuffers
-      indexIter@IndexIter {..} <- liftIO $ withForeignPtr iter peek
+#if DEBUG
+      liftIO $ C.dumpIndexIter iter
+      traceM $ "decodeBlock " ++ show iter ++ " " ++ show req
+#endif
+      indexIter@C.IndexIter {..} <- liftIO $ withForeignPtr iter peek
       let
-        IndexIterStream {indexIterStreamBlockCount} = indexIterStream
-        IndexIterBlock {..} = indexIterBlock
+        C.IndexIterStream {indexIterStreamBlockCount} = indexIterStream
+        C.IndexIterBlock {..} = indexIterBlock
         blockPos :: Position 'Compressed
         blockPos = fromIntegral indexIterBlockCompressedFileOffset
         blockUncompPos :: Position 'Uncompressed
@@ -267,8 +321,11 @@ indexedDecompressStream params index req0 = do
         (fromIntegral indexIterBlockTotalSize)
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
-      handleRet $ lift $ Stream.blockDecoder indexIter block filters
-
+      handleRet "Failed to initialize a block decoder" $
+        lift $ Stream.blockDecoder indexIter block filters
+#if DEBUG
+      lift $ Stream.dump "decodeBlock"
+#endif
       req' <- drainBuffers iter isLastChunk
         (calculateSkipBytes req blockUncompPos)
 
@@ -290,7 +347,7 @@ indexedDecompressStream params index req0 = do
       :: C.IndexIterPtr
       -> ReadRequest 'Compressed
       -> Int -- ^ Offset from the beginning of the block to the target position
-      -> IndexedDecompressStream Stream (ReadRequest 'Uncompressed)
+      -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     fillBuffers' iter req skipBytes = do
       isLastChunk <- fillBuffers params req
       drainBuffers iter isLastChunk skipBytes
@@ -299,13 +356,16 @@ indexedDecompressStream params index req0 = do
       :: C.IndexIterPtr
       -> Bool -- ^ Last chunk or not
       -> Int -- ^ Offset from the beginning of the block to the target position
-      -> IndexedDecompressStream Stream (ReadRequest 'Uncompressed)
+      -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     drainBuffers iter isLastChunk skipBytes = do
       lift $ assertBuffers isLastChunk
 
       ret <- lift $ Stream.decompress $ if isLastChunk
         then Stream.Finish
         else Stream.Run
+#if DEBUG
+      traceM $ "decompress -> " ++ show ret
+#endif
       case ret of
         Stream.Ok -> do
           outputBufferFull <- lift Stream.isOutputBufferFull
@@ -336,7 +396,7 @@ indexedDecompressStream params index req0 = do
 
         Stream.Error code -> do
           void $ finalizeStream skipBytes
-          throwStreamError $ DecompressError code
+          lift $ throwDecompressError code "Failed to decode a block"
 
 -- | If the 'ReadRequest' has a position, find the block which contains the
 -- position. If it doesn't have a position, find the next non-empty block.
@@ -345,7 +405,7 @@ indexedDecompressStream params index req0 = do
 locateBlock
   :: C.IndexIterPtr
   -> ReadRequest 'Uncompressed
-  -> IndexedDecompressStream Stream Bool
+  -> SeekableDecompressStream Stream Bool
 locateBlock iter req = not <$> liftIO act
   where
     act = case req of
@@ -367,7 +427,7 @@ fillBuffers DecompressParams {..} req = do
     fillOutputBuffer = lift $ do
       outputBufferFull <- Stream.isOutputBufferFull
       when outputBufferFull $ do
-        outFPtr <- Stream.unsafeLiftIO $ S.mallocByteString decompressBufferSize
+        outFPtr <- liftIO $ S.mallocByteString decompressBufferSize
         Stream.pushOutputBuffer outFPtr 0 decompressBufferSize
 
     fillInputBuffer = do
@@ -402,3 +462,281 @@ finalizeStream skipBytes = do
     else do
       lift Stream.end
       return Nothing
+
+-----------------------------------------------------------
+-- Index decoder
+
+decodeIndex :: Handle -> IO (C.Index, C.VLI)
+decodeIndex h = do
+  size <- hFileSize h
+  runDecodeStream h $ decodeIndexIO (fromIntegral size)
+
+decodeIndexIO :: Size -> DecodeStream IO (C.Index, C.VLI)
+decodeIndexIO size = bracket acquire release $ \(header, footer) ->
+  indexDecodingToIO
+    (decodeIndexStream (fromIntegral size))
+    ID.newIndexDecoderState header footer
+  where
+    acquire = liftIO $ (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
+    release (header, footer) = liftIO $ do
+      C.freeStreamFlags header
+      C.freeStreamFlags footer
+
+runDecodeStream
+  :: (MonadIO m, MonadThrow m)
+  => Handle
+  -> DecodeStream m a
+  -> m a
+runDecodeStream h = runEffect . loop
+  where
+    loop (P.Request seekRequest next) = do
+      chunk <- case seekRequest of
+        PReadWithSize (fromIntegral -> pos) size -> do
+          r <- liftIO $ try $ hSeek h AbsoluteSeek pos
+          case r of
+            Left e -> lift $ throwM (e :: IOException)
+            Right () -> lift $ hGetEnsureN h size
+        _ -> liftIO $ S.hGet h L.defaultChunkSize
+      loop (next chunk)
+    loop (P.Respond _ next) = loop (next ())
+    loop (P.M m) = lift m >>= loop
+    loop (P.Pure a) = return a
+
+hGetEnsureN :: (MonadIO m, MonadThrow m) => Handle -> Int -> m S.ByteString
+hGetEnsureN h expectedLen = do
+  fp <- liftIO $ S.mallocByteString expectedLen
+  actualLen <- liftIO $ withForeignPtr fp $ \p -> hGetBuf h p expectedLen
+  if expectedLen <= actualLen
+    then return $ S.PS fp 0 expectedLen
+    else throwM $ userError $
+      "hGetEnsureN: unexpected end of file (demanded " ++
+      show expectedLen ++ " bytes, but got " ++ show actualLen ++
+      " bytes)"
+
+-- | Seek to an absolute position and ask for an input with given size.
+pread
+  :: Size
+  -- ^ Input size
+  -> DecodeStream IndexDecoder S.ByteString
+pread size = do
+  pos <- lift ID.getPosition
+  request $ PReadWithSize pos size
+
+-- | Decode things from compressed stream.
+type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
+
+-- | Seek operation failure in downstream.
+data DecodeException = DecodeError
+  C.ErrorCode
+  --- ^ Error code from liblzma
+  String
+  --- ^ Description of the error
+  deriving (Show, Typeable)
+
+instance Exception DecodeException where
+  toException = lzmaExceptionToException
+  fromException = lzmaExceptionFromException
+
+------------------------------------------------------------
+
+headerSize, footerSize :: Integral a => a
+headerSize = fromIntegral C.streamHeaderSize
+footerSize = headerSize
+
+-- | Seek thorough a seekable stream and build a combined index. The index can
+-- later be used for seeking.
+decodeIndexStream
+  :: Size -- ^ Size of the file
+  -> DecodeStream IndexDecoder (C.Index, C.VLI)
+decodeIndexStream fileSize = do
+  lift $ ID.setPosition $ fromIntegral fileSize
+  index <- decodeIndex1
+  loop index
+  padding <- lift ID.getStreamPadding
+  return (index, padding)
+  where
+    loop :: C.Index -> DecodeStream IndexDecoder ()
+    loop index = do
+      pos <- lift ID.getPosition
+      when (pos > 0) $ do
+        index' <- decodeIndex1
+        handleRet "Failed to concatenate indicies." $
+          liftIO $ C.lzma_index_cat index index'
+        loop index
+
+-- | Parse an index
+decodeIndex1 :: DecodeStream IndexDecoder C.Index
+decodeIndex1 = do
+  padding <- parseStreamFooter
+  index <- parseIndex 8192 -- FIXME: Set appropreate size
+  parseStreamHeader index
+  checkIntegrity index
+  handleRet "Failed to set stream padding" $
+    liftIO $ C.lzma_index_stream_padding index padding
+  lift $ ID.modifyStreamPadding' (+ padding)
+  return index
+
+parseStreamFooter :: DecodeStream IndexDecoder C.VLI
+parseStreamFooter = loop 0
+  where
+    loop padding = do
+      pos <- lift ID.getPosition
+      when (pos < 2 * headerSize) $
+        lift $ throwM $ DecodeError C.DataError
+          "This file is too small to be a valid .xz file."
+
+      pos' <- lift $ do
+        ID.modifyPosition' (subtract footerSize)
+        ID.getPosition
+      when (pos' < footerSize) $
+        lift $ throwM $ DecodeError C.DataError $
+          "There is not enough data left to contain at least a stream header" ++
+          "and a stream footer."
+
+      chunk@(S.PS inFPtr _ _) <- pread footerSize
+      if isStreamPadding $ dropStreamPadding 2 chunk
+        then do
+          padding' <- lift $ skipStreamPaddings chunk 2 padding
+          loop padding'
+        else do
+          footer <- lift ID.getStreamFooter
+          handleRet "Failed to decode a stream footer." $
+            liftIO $ withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
+          version <- liftIO $ C.lzma_get_stream_flags_version footer
+          unless (version ==  0) $
+            lift $ throwM $ DecodeError C.OptionsError
+              "The stream footer specifies something that we don't support."
+          liftIO $ touchForeignPtr inFPtr
+          return padding
+
+skipStreamPaddings
+  :: S.ByteString
+  -- ^ Input chunk
+  -> Int
+  -- ^ Index
+  -> C.VLI
+  -> IndexDecoder C.VLI
+skipStreamPaddings chunk = go
+  where
+    go !i !padding =
+      if i >= 0 && isStreamPadding (dropStreamPadding i chunk)
+        then do
+          ID.modifyPosition' (subtract 4)
+          go (i - 1) (padding + 4)
+        else return padding
+
+isStreamPadding :: S.ByteString -> Bool
+isStreamPadding = S.all (== 0) . S.take 4
+
+dropStreamPadding :: Int -> S.ByteString -> S.ByteString
+dropStreamPadding n = S.drop (4*n)
+
+getIndexSize :: IndexDecoder C.VLI
+getIndexSize = do
+  footer <- ID.getStreamFooter
+  liftIO $ C.lzma_stream_flags_backward_size footer
+
+-- | Decode a stream index.
+parseIndex
+  :: C.VLI -- ^ Buffer size
+  -> DecodeStream IndexDecoder C.Index
+parseIndex bufSize = do
+  indexSize <- lift getIndexSize
+  -- Set posision to the beginning of the index.
+  lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
+  stream <- liftIO C.newStream
+  (ret, indexRef) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
+  unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
+    "Failed to initialize an index decoder."
+
+  loop stream indexRef indexSize
+
+  liftIO $ C.peekIndexRef indexRef
+  where
+    loop stream indexRef indexSize = do
+      let inAvail :: Integral a => a
+          inAvail = fromIntegral $ min bufSize indexSize
+      liftIO $ C.lzma_set_stream_avail_in stream inAvail
+      chunk <- pread inAvail
+      lift $ ID.modifyPosition' (+ inAvail)
+      let indexSize' = indexSize - inAvail
+      ret <- liftIO $ withByteString chunk $ \inPtr -> do
+          C.lzma_set_stream_next_in stream inPtr
+          C.lzma_code stream C.Run
+      case ret of
+        C.Ok -> loop stream indexRef indexSize'
+        C.Error C.BufError ->
+          lift $ throwM $ DecodeError C.DataError $
+            "The index decoder has liked more input than what the index " ++
+            "should be according to stream footer."
+        C.Error code ->
+          lift $ throwM $ DecodeError code "The index decoder faild."
+        C.StreamEnd -> do
+          inAvail' <- liftIO $ C.lzma_get_stream_avail_in stream
+          unless (indexSize' == 0 && inAvail' == 0) $
+            lift $ throwM $ DecodeError C.DataError $
+              "The index decoder didn't consume as much input as indicated " ++
+              "by the backward size field."
+
+-- | Decode the stream header and check that its stream flags match the stream
+-- footer.
+parseStreamHeader
+  :: C.Index
+  -> DecodeStream IndexDecoder ()
+parseStreamHeader index = do
+  indexSize <- lift getIndexSize
+  lift $ ID.modifyPosition' (subtract $ fromIntegral indexSize + headerSize)
+  blocksSize <- liftIO $ C.lzma_index_total_size index
+  lift $ ID.modifyPosition' (subtract $ fromIntegral blocksSize)
+  chunk <- pread headerSize
+  header <- lift ID.getStreamHeader
+  handleRet "Failed to decode a stream header." $
+    liftIO $ withByteString chunk $ C.lzma_stream_header_decode header
+
+checkIntegrity
+  :: C.Index
+  -> DecodeStream IndexDecoder ()
+checkIntegrity index = do
+  header <- lift ID.getStreamHeader
+  footer <- lift ID.getStreamFooter
+  handleRet "The stream header and the footer didn't agree." $
+    liftIO $ C.lzma_stream_flags_compare header footer
+  handleRet "Failed to set the footer to the index." $
+    liftIO $ C.lzma_index_stream_flags index footer
+  padding <- lift ID.getStreamPadding
+  handleRet "Failed to set stream padding to the index." $
+    liftIO $ C.lzma_index_stream_padding index padding
+
+indexDecodingToIO
+  :: DecodeStream IndexDecoder a
+  -> ID.IndexDecoderState
+  -> C.StreamFlags -- ^ Stream header
+  -> C.StreamFlags -- ^ Stream footer
+  -> DecodeStream IO a
+indexDecodingToIO stream0 state0 header footer = go stream0 state0
+  where
+    go (P.Request req next) state =
+      P.Request req $ \chunk -> go (next chunk) state
+    go (P.Respond out next) state =
+      P.Respond out $ \resp -> go (next resp) state
+    go (P.M m) state = do
+      (state', stream') <- liftIO $ ID.runIndexDecoder m state header footer
+      go stream' state'
+    go (P.Pure a) _ =  P.Pure a
+
+-----------------------------------------------------------
+
+hasMagicBytes :: Monad m => DecodeStream m Bool
+hasMagicBytes = do
+  chunk <- request $ PReadWithSize beginning 6
+  return $ chunk == "\xfd\&7zXZ\x00" -- \& is an empty string
+  where
+    beginning :: Position 'Compressed
+    beginning = 0
+
+-----------------------------------------------------------
+
+withByteString :: S.ByteString -> (Ptr Word8 -> IO a) -> IO a
+withByteString (S.PS fptr off _len) f =
+    withForeignPtr fptr $ \ptr ->
+        f (advancePtr ptr off)

@@ -16,9 +16,7 @@ import Pipes.Core
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as S8
 
-import Codec.Compression.LZMA.Index
-import Codec.Compression.LZMA.Internal
-import Codec.Compression.LZMA.Internal.Index
+import Codec.Compression.LZMA.Incremental
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf
@@ -26,18 +24,19 @@ import Text.Printf
 main :: IO ()
 main = do
   file:args <- getArgs
-  (index, _padding) <- withFile file ReadMode decodeIndicies
-  withFile file ReadMode $ \h -> runEffect $
-    fromHandleRandom h +>>
-    indexedDecompressIO defaultDecompressParams index +>>
-    case args of
-      [] -> seekThenReadToEnd 0
-      [pos] -> seekThenReadToEnd (read pos)
-      positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
+  withFile file ReadMode $ \h -> do
+    size <- hFileSize h
+    runEffect $
+      fromHandleRandom h +>> do
+        (index, _padding) <- decodeIndexIO (fromIntegral size)
+        seekableDecompressIO defaultDecompressParams index +>>
+          case args of
+            [] -> seekThenReadToEnd 0
+            [pos] -> seekThenReadToEnd (read pos)
+            positions -> mapM_ seekAndDump (map (integerToPos . read) positions)
   where
     integerToPos :: Integer -> Position 'Uncompressed
     integerToPos = fromIntegral
-
 
 fromHandleRandom
   :: MonadIO m
@@ -82,7 +81,7 @@ seekAndDump pos = do
   chunk <- request $ PRead pos
   liftIO $ S8.putStrLn $ S.take 80 chunk
 
-printInfoAdvanced :: Index -> StreamPadding -> IO ()
+printInfoAdvanced :: Index -> C.VLI -> IO ()
 printInfoAdvanced index padding = do
   streamCount <- C.lzma_index_stream_count index
   blockCount <- C.lzma_index_block_count index
