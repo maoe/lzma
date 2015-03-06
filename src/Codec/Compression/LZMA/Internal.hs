@@ -513,12 +513,12 @@ pread pos size = do
   builder <- loop size (PRead pos) mempty
   return $! L.toStrict $ B.toLazyByteString builder
   where
-    loop nbytes req chunks = do
-      chunk <- request req
-      let chunks' = chunks <> B.byteString (S.take nbytes chunk)
-      if S.length chunk >= nbytes
-        then return chunks'
-        else loop (nbytes - S.length chunk) Read chunks'
+    loop nbytes req chunks
+      | nbytes <= 0 = return chunks
+      | otherwise = do
+        chunk <- request req
+        let chunks' = chunks <> B.byteString (S.take nbytes chunk)
+        loop (nbytes - S.length chunk) Read chunks'
 
 -- | Decode things from compressed stream.
 type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
