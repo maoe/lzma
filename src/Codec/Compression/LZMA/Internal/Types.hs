@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 module Codec.Compression.LZMA.Internal.Types
@@ -25,20 +24,11 @@ import Data.Tagged (Tagged)
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 -- | Read request to upstream.
---
--- [@'PReadWithSize' pos size@] Seek to @pos@ and read @size@ bytes.
---   This constructor is used only for asking for compressed bytes in the index
---   decoder.
--- [@'PRead' pos@] Seek to @pos@ and read bytes.
--- [@'Read'@] Read next bytes from the current position.
-data ReadRequest (c :: Compression) where
-  PReadWithSize :: Position 'Compressed -> Size -> ReadRequest 'Compressed
-  --- ^ Seek to the position and read the given number of bytes. This constructor
-  -- is used only for asking for compressed bytes.
-  PRead :: Position c -> ReadRequest c
-  --- ^ Seek to the position and read bytes.
-  Read :: ReadRequest c
-  --- ^ Read next bytes from the current position.
+data ReadRequest (c :: Compression)
+  = PRead (Position c)
+  -- ^ Seek to @pos@ and read bytes.
+  | Read
+  -- ^ Read next bytes from the current position.
 
 deriving instance Show (ReadRequest c)
 

@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 module Main where
@@ -46,12 +45,6 @@ fromHandleRandom
 fromHandleRandom h = go
   where
     go req = case req of
-      PReadWithSize pos size -> do
-        chunk <- liftIO $ do
-          hSeek h AbsoluteSeek (fromIntegral pos)
-          S.hGet h size
-        req' <- respond chunk
-        go req'
       PRead pos -> do
         chunk <- liftIO $ do
           hSeek h AbsoluteSeek (fromIntegral pos)
