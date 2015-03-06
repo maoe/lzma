@@ -2,7 +2,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -65,6 +64,7 @@ import Pipes.Safe ()
 import qualified Control.Monad.ST as S
 import qualified Control.Monad.ST.Lazy as L
 import qualified Data.ByteString as S
+import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Internal as S
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Internal as L
@@ -316,9 +316,7 @@ seekableDecompressStream params index req0 = do
       -- Check if the block number doesn't exceed the total block count.
       assert (indexIterBlockNumberInStream <= indexIterStreamBlockCount) $
         return ()
-      isLastChunk <- fillBuffers params $ PReadWithSize
-        blockPos
-        (fromIntegral indexIterBlockTotalSize)
+      isLastChunk <- fillBuffers params (PRead blockPos)
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
       handleRet "Failed to initialize a block decoder" $
@@ -490,37 +488,37 @@ runDecodeStream
 runDecodeStream h = runEffect . loop
   where
     loop (P.Request seekRequest next) = do
-      chunk <- case seekRequest of
-        PReadWithSize (fromIntegral -> pos) size -> do
+      case seekRequest of
+        PRead (fromIntegral -> pos) -> do
           r <- liftIO $ try $ hSeek h AbsoluteSeek pos
           case r of
             Left e -> lift $ throwM (e :: IOException)
-            Right () -> lift $ hGetEnsureN h size
-        _ -> liftIO $ S.hGet h L.defaultChunkSize
+            Right () -> return ()
+        Read -> return ()
+      chunk <- liftIO $ S.hGetSome h L.defaultChunkSize
       loop (next chunk)
     loop (P.Respond _ next) = loop (next ())
     loop (P.M m) = lift m >>= loop
     loop (P.Pure a) = return a
 
-hGetEnsureN :: (MonadIO m, MonadThrow m) => Handle -> Int -> m S.ByteString
-hGetEnsureN h expectedLen = do
-  fp <- liftIO $ S.mallocByteString expectedLen
-  actualLen <- liftIO $ withForeignPtr fp $ \p -> hGetBuf h p expectedLen
-  if expectedLen <= actualLen
-    then return $ S.PS fp 0 expectedLen
-    else throwM $ userError $
-      "hGetEnsureN: unexpected end of file (demanded " ++
-      show expectedLen ++ " bytes, but got " ++ show actualLen ++
-      " bytes)"
-
 -- | Seek to an absolute position and ask for an input with given size.
+-- Note that this is inefficient when you ask for a large amount of bytes.
 pread
-  :: Size
+  :: Monad m
+  => Position 'Compressed
+  -> Size
   -- ^ Input size
-  -> DecodeStream IndexDecoder S.ByteString
-pread size = do
-  pos <- lift ID.getPosition
-  request $ PReadWithSize pos size
+  -> DecodeStream m S.ByteString
+pread pos size = do
+  builder <- loop size (PRead pos) mempty
+  return $! L.toStrict $ B.toLazyByteString builder
+  where
+    loop nbytes req chunks = do
+      chunk <- request req
+      let chunks' = chunks <> B.byteString (S.take nbytes chunk)
+      if S.length chunk >= nbytes
+        then return chunks'
+        else loop (nbytes - S.length chunk) Read chunks'
 
 -- | Decode things from compressed stream.
 type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
@@ -580,20 +578,20 @@ parseStreamFooter :: DecodeStream IndexDecoder C.VLI
 parseStreamFooter = loop 0
   where
     loop padding = do
-      pos <- lift ID.getPosition
-      when (pos < 2 * headerSize) $
-        lift $ throwM $ DecodeError C.DataError
-          "This file is too small to be a valid .xz file."
-
-      pos' <- lift $ do
+      do
+        pos <- lift ID.getPosition
+        when (pos < 2 * headerSize) $
+          lift $ throwM $ DecodeError C.DataError
+            "This file is too small to be a valid .xz file."
+      pos <- lift $ do
         ID.modifyPosition' (subtract footerSize)
         ID.getPosition
-      when (pos' < footerSize) $
+      when (pos < footerSize) $
         lift $ throwM $ DecodeError C.DataError $
           "There is not enough data left to contain at least a stream header" ++
           "and a stream footer."
 
-      chunk@(S.PS inFPtr _ _) <- pread footerSize
+      chunk@(S.PS inFPtr _ _) <- pread pos footerSize
       if isStreamPadding $ dropStreamPadding 2 chunk
         then do
           padding' <- lift $ skipStreamPaddings chunk 2 padding
@@ -657,7 +655,9 @@ parseIndex bufSize = do
       let inAvail :: Integral a => a
           inAvail = fromIntegral $ min bufSize indexSize
       liftIO $ C.lzma_set_stream_avail_in stream inAvail
-      chunk <- pread inAvail
+      chunk <- do
+        pos <- lift ID.getPosition
+        pread pos inAvail
       lift $ ID.modifyPosition' (+ inAvail)
       let indexSize' = indexSize - inAvail
       ret <- liftIO $ withByteString chunk $ \inPtr -> do
@@ -688,7 +688,9 @@ parseStreamHeader index = do
   lift $ ID.modifyPosition' (subtract $ fromIntegral indexSize + headerSize)
   blocksSize <- liftIO $ C.lzma_index_total_size index
   lift $ ID.modifyPosition' (subtract $ fromIntegral blocksSize)
-  chunk <- pread headerSize
+  chunk <- do
+    pos <- lift ID.getPosition
+    pread pos headerSize
   header <- lift ID.getStreamHeader
   handleRet "Failed to decode a stream header." $
     liftIO $ withByteString chunk $ C.lzma_stream_header_decode header
@@ -728,8 +730,8 @@ indexDecodingToIO stream0 state0 header footer = go stream0 state0
 
 hasMagicBytes :: Monad m => DecodeStream m Bool
 hasMagicBytes = do
-  chunk <- request $ PReadWithSize beginning 6
-  return $ chunk == "\xfd\&7zXZ\x00" -- \& is an empty string
+  chunk <- pread beginning 6
+  return $! chunk == "\xfd\&7zXZ\x00" -- \& is an empty string
   where
     beginning :: Position 'Compressed
     beginning = 0
