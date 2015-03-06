@@ -574,6 +574,8 @@ decodeIndex1 = do
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
 
+-- | Skip stream padding if exists then parse a stream footer. It returns the
+-- the length of the stream padding.
 parseStreamFooter :: DecodeStream IndexDecoder C.VLI
 parseStreamFooter = loop 0
   where
