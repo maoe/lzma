@@ -20,6 +20,7 @@ main = do
   file:_ <- getArgs
   (index, padding) <- withFile file ReadMode decodeIndex
   printInfoAdvanced index padding
+  C.finalizeIndex index
 
 printInfoAdvanced
   :: Index

@@ -286,7 +286,6 @@ seekableDecompressStream
 seekableDecompressStream params index req0 = do
   iter <- liftIO $ C.lzma_index_iter_init index
   decodeLoop iter req0
-  liftIO $ C.touchIndex index
   where
     decodeLoop iter req = do
       found <- locateBlock iter req
@@ -630,15 +629,15 @@ parseIndex bufSize = do
   -- Set posision to the beginning of the index.
   lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
   stream <- liftIO C.newStream
-  (ret, indexRef) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
+  (ret, indexFPtr) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
   unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
     "Failed to initialize an index decoder."
 
-  loop stream indexRef indexSize
+  loop stream indexSize
 
-  liftIO $ C.peekIndexRef indexRef
+  liftIO $ C.peekIndexFPtr indexFPtr
   where
-    loop stream indexRef indexSize = do
+    loop stream indexSize = do
       let inAvail :: Integral a => a
           inAvail = fromIntegral $ min bufSize indexSize
       liftIO $ C.setStreamAvailIn stream inAvail
@@ -651,7 +650,7 @@ parseIndex bufSize = do
         C.setStreamNextIn stream inPtr
         C.lzma_code stream C.Run
       case ret of
-        C.Ok -> loop stream indexRef indexSize'
+        C.Ok -> loop stream indexSize'
         C.Error C.BufError ->
           lift $ throwM $ DecodeError C.DataError $
             "The index decoder has liked more input than what the index " ++
