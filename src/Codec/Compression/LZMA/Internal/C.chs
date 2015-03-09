@@ -82,11 +82,9 @@ module Codec.Compression.LZMA.Internal.C
   -- * Indexing
   -- ** Data types
   , Index
-  , withIndex
-  , touchIndex
-  , IndexRef
-  , withIndexRef
-  , peekIndexRef
+  , finalizeIndex
+  , withIndexFPtr
+  , peekIndexFPtr
 
   -- ** Index manipulation
   , lzma_index_memusage
@@ -873,37 +871,26 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 -- that take a const pointer to 'Index' or use 'IndexIter'. The same
 -- iterator must be used only by one thread at a time, of course, but there can
 -- be as many iterators for the same 'Index' as needed.
-{# pointer *lzma_index as Index foreign newtype #}
-
-foreign import ccall "lzma.h &finalize_index"
-  lzma_finalize_index :: FinalizerPtr Index
-
-touchIndex :: Index -> IO ()
-touchIndex (Index fptr) = touchForeignPtr fptr
+{# pointer *lzma_index as Index newtype #}
 
 deriving instance Show Index
+deriving instance Storable Index
 
--- | Pointer to 'Index'.
-newtype IndexRef = IndexRef (ForeignPtr (Ptr Index))
+finalizeIndex :: Index -> IO ()
+finalizeIndex (Index ptr) = c_finalize_index ptr
 
-deriving instance Show IndexRef
+foreign import ccall "lzma.h finalize_index"
+  c_finalize_index :: Ptr Index -> IO ()
 
--- | Dereference an 'IndexRef' and apply a function to the 'Index'.
-withIndexRef :: IndexRef -> (Index -> IO a) -> IO a
-withIndexRef (IndexRef refFPtr) f =
-  withForeignPtr refFPtr $ \(refPtr :: Ptr (Ptr Index)) -> do
-    indexPtr <- peek refPtr
-    indexFPtr <- newForeignPtr_ indexPtr
-    f $ Index indexFPtr
+-- | Dereference a @'ForeignPtr' 'Index'@ then apply a function to the 'Index'.
+withIndexFPtr :: ForeignPtr Index -> (Index -> IO a) -> IO a
+withIndexFPtr fptr f = withForeignPtr fptr (peek >=> f)
 
 -- | Pointer to an 'IndexIter'.
 {# pointer *lzma_index_iter as IndexIterPtr foreign -> IndexIter #}
 
-peekIndexRef :: IndexRef -> IO Index
-peekIndexRef ref = do
-  index@(Index fptr) <- withIndexRef ref return
-  addForeignPtrFinalizer lzma_finalize_index fptr
-  return index
+peekIndexFPtr :: ForeignPtr Index -> IO Index
+peekIndexFPtr fptr = withIndexFPtr fptr return
 
 -- | Iterator to get information about Blocks and Streams.
 data IndexIter = IndexIter
@@ -1156,11 +1143,7 @@ instance Storable IndexIter where
 --
 -- On success, a pointer to an empty initialized 'Index' is returned.
 -- If allocation fails, NULL is returned.
-lzma_index_init :: IO Index
-lzma_index_init = do
-  indexPtr <- {# call lzma_index_init as c_lzma_index_init #} nullPtr
-  indexFPtr <- newForeignPtr lzma_finalize_index indexPtr
-  return $ Index indexFPtr
+{# fun lzma_index_init { passNullPtr- `Ptr ()' } -> `Index' #}
 
 -- | Deallocate 'Index'.
 --
@@ -1325,9 +1308,7 @@ lzma_index_iter_init
 lzma_index_iter_init index = do
   iterFPtr <- mallocForeignPtrBytes {# sizeof lzma_index_iter #}
   withForeignPtr iterFPtr $ \iterPtr ->
-    -- withIndex index $ c_lzma_index_iter_init iterPtr
-    withIndex index $ \indexPtr ->
-      {# call lzma_index_iter_init as c_lzma_index_iter_init #} iterPtr indexPtr
+    {# call lzma_index_iter_init as c_lzma_index_iter_init #} iterPtr index
   return iterFPtr
 
 -- | Rewind the iterator.
@@ -1386,12 +1367,11 @@ lzma_index_iter_init index = do
 -- | Duplicate 'Index'.
 --
 -- Returns a copy of the 'Index', or NULL if memory allocation failed.
-lzma_index_dup :: Index -> IO Index
-lzma_index_dup index = do
-  indexPtr <- withIndex index $ \indexPtr ->
-    {# call lzma_index_dup as c_lzma_index_dup #} indexPtr nullPtr
-  indexFPtr <- newForeignPtr lzma_finalize_index indexPtr
-  return $ Index indexFPtr
+{# fun lzma_index_dup
+  { `Index'
+  , passNullPtr- `Ptr ()'
+  } -> `Index'
+  #}
 
 -- | Initialize .xz index encoder.
 --
@@ -1414,16 +1394,16 @@ lzma_index_decoder
   -- ^ Properly prepared 'Stream'
   -> Word64
   -- ^ How much memory the resulting 'Index' is allowed to require.
-  -> IO (Ret, IndexRef)
+  -> IO (Ret, ForeignPtr Index)
 lzma_index_decoder stream (fromIntegral -> memLimit) =
   withStream stream $ \streamPtr -> do
     -- double pointer to an index
-    (refFPtr :: ForeignPtr (Ptr Index)) <- mallocForeignPtr
-    withForeignPtr refFPtr $ \indexPPtr -> do
+    (indexFPtr :: ForeignPtr Index) <- mallocForeignPtr
+    withForeignPtr indexFPtr $ \(indexPtr :: Ptr Index) -> do
       (toRet -> ret) <-
         {# call lzma_index_decoder as c_lzma_index_decoder #}
-            streamPtr indexPPtr memLimit
-      return (ret, IndexRef refFPtr)
+            streamPtr indexPtr memLimit
+      return (ret, indexFPtr)
 
 passNullPtr :: (Ptr a -> b) -> b
 passNullPtr f = f nullPtr
