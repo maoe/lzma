@@ -1,4 +1,5 @@
 {-# LANGUAGE CApiFFI #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RecordWildCards #-}
