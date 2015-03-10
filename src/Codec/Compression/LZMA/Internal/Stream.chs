@@ -381,7 +381,7 @@ blockDecoder IndexIter {..} block filters = do
 ------------------------------------------------------------
 -- Debugging tools
 
-#ifdef DEBUG
+#if DEBUG
 
 debug :: Show a => a -> M.Stream ()
 debug = liftIO . hPrint stderr
