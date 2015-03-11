@@ -13,16 +13,10 @@ module Codec.Compression.LZMA.Internal.C
   , newStream
 
   -- ** Getters and settters
-  , getStreamAvailIn
-  , setStreamAvailIn
-  , setStreamAvailOut
-  , setStreamNextIn
-  , setStreamNextOut
-  , lzma_get_stream_avail_in
-  , lzma_set_stream_avail_in
-  , lzma_set_stream_avail_out
-  , lzma_set_stream_next_in
-  , lzma_set_stream_next_out
+  , streamAvailIn
+  , streamAvailOut
+  , streamNextIn
+  , streamNextOut
 
   -- * Stream header and footer
   , StreamFlags
@@ -149,6 +143,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import qualified GHC.Generics as GHC
 
 import Data.Vector.Storable.Mutable (IOVector)
+import Foreign.Var
 import qualified Data.Vector.Storable.Mutable as VM
 
 import Codec.Compression.LZMA.Internal.Constants
@@ -219,45 +214,30 @@ newStream = do
   addForeignPtrFinalizer finalize_stream fptr
   return $ Stream fptr
 
-getStreamAvailIn :: Stream -> IO Int
-getStreamAvailIn stream =
-  fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
+streamAvailIn :: Stream -> Var Int
+streamAvailIn stream = Var get' set
+  where
+    get' = fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
+    set inAvail = withStream stream $ \p ->
+      {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
-setStreamAvailIn :: Stream -> Int -> IO ()
-setStreamAvailIn stream inAvail = withStream stream $ \p ->
-  {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
+streamAvailOut :: Stream -> SettableVar Int
+streamAvailOut stream = SettableVar set
+  where
+    set outAvail = withStream stream $ \p ->
+      {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
 
-setStreamAvailOut :: Stream -> Int -> IO ()
-setStreamAvailOut stream outAvail = withStream stream $ \p ->
-  {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
+streamNextIn :: Stream -> SettableVar (Ptr Word8)
+streamNextIn stream = SettableVar set
+  where
+    set inNext = withStream stream $ \p ->
+      {# set lzma_stream.next_in #} p (castPtr inNext)
 
-setStreamNextIn :: Stream -> Ptr Word8 -> IO ()
-setStreamNextIn stream inNext = withStream stream $ \p ->
-  {# set lzma_stream.next_in #} p (castPtr inNext)
-
-setStreamNextOut :: Stream -> Ptr Word8 -> IO ()
-setStreamNextOut stream outNext = withStream stream $ \p ->
-  {# set lzma_stream.next_out #} p (castPtr outNext)
-
-{-# DEPRECATED lzma_get_stream_avail_in "Use 'getStreamAvailIn'" #-}
-lzma_get_stream_avail_in :: Stream -> IO Int
-lzma_get_stream_avail_in = getStreamAvailIn
-
-{-# DEPRECATED lzma_set_stream_avail_in "Use 'setStreamAvailIn'" #-}
-lzma_set_stream_avail_in :: Stream -> Int -> IO ()
-lzma_set_stream_avail_in = setStreamAvailIn
-
-{-# DEPRECATED lzma_set_stream_avail_out "Use 'setStreamAvailOut'" #-}
-lzma_set_stream_avail_out :: Stream -> Int -> IO ()
-lzma_set_stream_avail_out = setStreamAvailOut
-
-{-# DEPRECATED lzma_set_stream_next_in "Use 'setStreamNextIn'" #-}
-lzma_set_stream_next_in :: Stream -> Ptr Word8 -> IO ()
-lzma_set_stream_next_in = setStreamNextIn
-
-{-# DEPRECATED lzma_set_stream_next_out "Use 'setStreamNextOut'" #-}
-lzma_set_stream_next_out :: Stream -> Ptr Word8 -> IO ()
-lzma_set_stream_next_out = setStreamNextOut
+streamNextOut :: Stream -> SettableVar (Ptr Word8)
+streamNextOut stream = SettableVar set
+  where
+    set outNext = withStream stream $ \p ->
+      {# set lzma_stream.next_out #} p (castPtr outNext)
 
 -- | The action argument for 'lzma_code'.
 --
