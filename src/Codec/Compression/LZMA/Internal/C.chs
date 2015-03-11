@@ -36,11 +36,10 @@ module Codec.Compression.LZMA.Internal.C
   , withBlock
   , newBlock
   , touchBlock
-  , lzma_set_block_version
-  , lzma_get_block_header_size
-  , lzma_set_block_header_size
-  , lzma_set_block_check
-  , lzma_set_block_filters
+  , blockVersion
+  , blockHeaderSize
+  , blockCheck
+  , blockFilters
 
   , lzma_block_header_size_decode
   , lzma_block_header_size
@@ -575,31 +574,37 @@ newBlock = Block <$> mallocForeignPtrBytes {# sizeof lzma_block #}
 touchBlock :: Block -> IO ()
 touchBlock (Block blockFPtr) = touchForeignPtr blockFPtr
 
-lzma_set_block_version :: Block -> Word32 -> IO ()
-lzma_set_block_version block version =
-  withBlock block $ \blockPtr ->
-    {# set lzma_block.version #} blockPtr (fromIntegral version)
+blockVersion :: Block -> SettableVar Word32
+blockVersion block = SettableVar set
+  where
+    set version =
+      withBlock block $ \blockPtr ->
+        {# set lzma_block.version #} blockPtr (fromIntegral version)
 
-lzma_set_block_header_size :: Block -> Word32 -> IO ()
-lzma_set_block_header_size block size =
-  withBlock block $ \blockPtr ->
-    {# set lzma_block.header_size #} blockPtr (fromIntegral size)
+blockHeaderSize :: Block -> Var Word32
+blockHeaderSize block = Var get' set
+  where
+    get' =
+      withBlock block $ \blockPtr ->
+        fromIntegral <$> {# get lzma_block.header_size #} blockPtr
+    set size =
+      withBlock block $ \blockPtr ->
+        {# set lzma_block.header_size #} blockPtr (fromIntegral size)
 
-lzma_get_block_header_size :: Block -> IO Word32
-lzma_get_block_header_size block =
-  withBlock block $ \blockPtr ->
-    fromIntegral <$> {# get lzma_block.header_size #} blockPtr
+blockCheck :: Block -> SettableVar Check
+blockCheck block = SettableVar set
+  where
+    set check =
+      withBlock block $ \blockPtr ->
+        {# set lzma_block.check #} blockPtr (fromIntegral (fromEnum check))
 
-lzma_set_block_check :: Block -> Check -> IO ()
-lzma_set_block_check block check =
-  withBlock block $ \blockPtr ->
-    {# set lzma_block.check #} blockPtr (fromIntegral (fromEnum check))
-
-lzma_set_block_filters :: Block -> IOVector Filter -> IO ()
-lzma_set_block_filters block (VM.MVector _ filtersFPtr) =
-  withBlock block $ \blockPtr ->
-    withForeignPtr filtersFPtr $ \filtersPtr ->
-      {# set lzma_block.filters #} blockPtr (castPtr filtersPtr)
+blockFilters :: Block -> SettableVar (IOVector Filter)
+blockFilters block = SettableVar set
+  where
+    set (VM.MVector _ filtersFPtr) =
+      withBlock block $ \blockPtr ->
+        withForeignPtr filtersFPtr $ \filtersPtr ->
+          {# set lzma_block.filters #} blockPtr (castPtr filtersPtr)
 
 lzma_block_header_size_decode :: Word8 -> Word32
 lzma_block_header_size_decode =
