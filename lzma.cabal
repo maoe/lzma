@@ -26,7 +26,6 @@ library
     Codec.Compression.LZMA.Internal.Stream
   other-modules:
     Codec.Compression.LZMA.Internal.Constants
-    Codec.Compression.LZMA.Internal.Stream.Monad
     Codec.Compression.LZMA.Internal.Types
   build-depends:
       base >= 4.7 && < 4.8

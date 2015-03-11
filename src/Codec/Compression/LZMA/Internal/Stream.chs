@@ -1,11 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
--- {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 module Codec.Compression.LZMA.Internal.Stream
-  ( M.Stream
+  ( Stream
   , runStream
   , State
   , newState
@@ -55,6 +57,7 @@ module Codec.Compression.LZMA.Internal.Stream
   ) where
 import Control.Applicative
 import Control.Exception (assert)
+import Control.Monad
 import Foreign
 import Foreign.C
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
@@ -62,7 +65,7 @@ import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Control.Monad.Catch
 import Control.Monad.ST
 import Control.Monad.ST.Unsafe (unsafeIOToST)
-import Control.Monad.Trans (liftIO)
+import Control.Monad.Trans (MonadIO(..))
 import Data.Vector.Storable.Mutable (IOVector)
 import Foreign.Var
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
@@ -70,7 +73,6 @@ import qualified Data.ByteString.Internal as S (nullForeignPtr)
 {# import Codec.Compression.LZMA.Internal.C #} ()
 import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.C as C
-import qualified Codec.Compression.LZMA.Internal.Stream.Monad as M
 
 #ifdef DEBUG
 import Debug.Trace
@@ -81,13 +83,75 @@ import System.IO (hPrint, hPutStrLn, stderr)
 
 {# context lib="lzma" prefix="lzma" #}
 
+-- | The Stream monad, which maintains pointers to the underlying stream state,
+-- the input buffer and the output buffer.
+newtype Stream a = Stream
+  { unStream
+      :: C.Stream
+      -> ForeignPtr Word8 -- Input buffer
+      -> ForeignPtr Word8 -- Output buffer
+      -> Int -- Offset of the output
+      -> Int -- Length of the output
+      -> IO (ForeignPtr Word8, ForeignPtr Word8, Int, Int, a)
+  }
+
+instance Functor Stream where
+  fmap = liftM
+
+instance Applicative Stream where
+  pure = return
+  (<*>) = ap
+
+instance Monad Stream where
+  return a = Stream $ \_ inBuf outBuf offset len ->
+    return (inBuf, outBuf, offset, len, a)
+  Stream m >>= k = Stream $ \stream inBuf outBuf outOffset outLength -> do
+    (inBuf', outBuf', outOffset', outLength', a) <-
+      m stream inBuf outBuf outOffset outLength
+    unStream (k a) stream inBuf' outBuf' outOffset' outLength'
+
+instance MonadIO Stream where
+  liftIO = unsafeLiftIO
+
+unsafeLiftIO :: IO a -> Stream a
+unsafeLiftIO m = Stream $ \_stream inBuf outBuf outOffset outLength -> do
+  a <- m
+  return (inBuf, outBuf, outOffset, outLength, a)
+
+instance MonadThrow Stream where
+  throwM = unsafeLiftIO . throwM
+
+instance MonadCatch Stream where
+  catch (Stream m) handler =
+    Stream $ \stream inBuf outBuf outOffset outLength ->
+      m stream inBuf outBuf outOffset outLength
+        `catch` \e ->
+          unStream (handler e) stream inBuf outBuf outOffset outLength
+
+instance MonadMask Stream where
+  mask f = Stream $ \stream inBuf outBuf outOffset outLength ->
+    mask $ \restore ->
+      unStream (f $ g restore) stream inBuf outBuf outOffset outLength
+    where
+      g :: (forall b. IO b -> IO b) -> Stream a -> Stream a
+      g restore (Stream m) = Stream $ \stream inBuf outBuf outOffset outLength ->
+        restore $ m stream inBuf outBuf outOffset outLength
+
+  uninterruptibleMask f = Stream $ \stream inBuf outBuf outOffset outLength ->
+    uninterruptibleMask $ \restore ->
+      unStream (f $ g restore) stream inBuf outBuf outOffset outLength
+    where
+      g :: (forall b. IO b -> IO b) -> Stream a -> Stream a
+      g restore (Stream m) = Stream $ \stream inBuf outBuf outOffset outLength ->
+        restore $ m stream inBuf outBuf outOffset outLength
+
 -- | Add a new input buffer.
 pushInputBuffer
   :: ForeignPtr Word8
   -- ^ Pointer to the payload of a buffer
   -> Int -- ^ Offset for the buffer
   -> Int -- ^ Length of the buffer
-  -> M.Stream ()
+  -> Stream ()
 pushInputBuffer inBuf inOffset inLen = do
   inAvail <- getInAvail
   assert (inAvail == 0) $ return ()
@@ -99,10 +163,10 @@ pushInputBuffer inBuf inOffset inLen = do
   setInAvail inLen
   setInNext $ unsafeForeignPtrToPtr inBuf `plusPtr` inOffset
 
-isInputBufferEmpty :: M.Stream Bool
+isInputBufferEmpty :: Stream Bool
 isInputBufferEmpty = (0 ==) <$> getInAvail
 
-remainingInputBuffer :: M.Stream (ForeignPtr Word8, Int, Int)
+remainingInputBuffer :: Stream (ForeignPtr Word8, Int, Int)
 remainingInputBuffer = do
   inBuf <- getInBuf
   inNext <- getInNext
@@ -116,7 +180,7 @@ pushOutputBuffer
   :: ForeignPtr Word8 -- ^
   -> Int -- ^
   -> Int -- ^
-  -> M.Stream ()
+  -> Stream ()
 pushOutputBuffer outBuf outOffset outLen = do
   outAvail <- getOutAvail
   assert (outAvail == 0) $ return ()
@@ -134,7 +198,7 @@ pushOutputBuffer outBuf outOffset outLen = do
 -- | Get the part of the output buffer that is currently full (might be 0, use
 -- 'outputBufferBytesAvailable' to check). This may leave some space remaining
 -- in the buffer, use 'outputBufferSpaceRemaining' to check.
-popOutputBuffer :: M.Stream (ForeignPtr Word8, Int, Int)
+popOutputBuffer :: Stream (ForeignPtr Word8, Int, Int)
 popOutputBuffer = do
   outBuf <- getOutBuf
   outOffset <- getOutOffset
@@ -147,16 +211,16 @@ popOutputBuffer = do
 
   return (outBuf, outOffset, outAvail)
 
-outputBufferBytesAvailable :: M.Stream Int
+outputBufferBytesAvailable :: Stream Int
 outputBufferBytesAvailable = getOutAvail
 
-outputBufferSpaceRemaining :: M.Stream Int
+outputBufferSpaceRemaining :: Stream Int
 outputBufferSpaceRemaining = getOutFree
 
-isOutputBufferFull :: M.Stream Bool
+isOutputBufferFull :: Stream Bool
 isOutputBufferFull = (0 ==) <$> outputBufferSpaceRemaining
 
-flushBuffers :: M.Stream ()
+flushBuffers :: Stream ()
 flushBuffers = do
   setInNext nullPtr
   setInAvail 0
@@ -169,11 +233,11 @@ flushBuffers = do
 
 ------------------------------------------------------------
 
-compress :: M.Stream C.Ret
+compress :: Stream C.Ret
 compress = do
   undefined
 
-decompress :: C.Action -> M.Stream C.Ret
+decompress :: C.Action -> Stream C.Ret
 decompress action = do
   outFree <- getOutFree
 
@@ -189,9 +253,9 @@ decompress action = do
   return result
 
 ------------------------------------------------------------
--- M.Stream monad
+-- Stream monad
 
--- | Opaque data type to hold the underlying state in the 'M.Stream' monad.
+-- | Opaque data type to hold the underlying state in the 'Stream' monad.
 data State s = State
   { stateStream :: !C.Stream
   , stateInBuf :: !(ForeignPtr Word8)
@@ -205,88 +269,88 @@ newState = unsafeIOToST $ do
   stream <- C.newStream
   return $ State stream S.nullForeignPtr S.nullForeignPtr 0 0
 
-runStream :: M.Stream a -> State s -> ST s (a, State s)
-runStream (M.Stream m) (State {..}) = unsafeIOToST $ do
+runStream :: Stream a -> State s -> ST s (a, State s)
+runStream (Stream m) (State {..}) = unsafeIOToST $ do
   (inBuf, outBuf, outOff, outLen, a) <-
     m stateStream stateInBuf stateOutBuf stateOutOffset stateOutLength
   return (a, State stateStream inBuf outBuf outOff outLen)
 
-getStream :: M.Stream C.Stream
-getStream = M.Stream $ \stream inBuf outBuf outOffset outLength ->
+getStream :: Stream C.Stream
+getStream = Stream $ \stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, stream)
 
-getInBuf :: M.Stream (ForeignPtr Word8)
-getInBuf = M.Stream $ \_stream inBuf outBuf outOffset outLength ->
+getInBuf :: Stream (ForeignPtr Word8)
+getInBuf = Stream $ \_stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, inBuf)
 
-setInBuf :: ForeignPtr Word8 -> M.Stream ()
-setInBuf inBuf = M.Stream $ \_stream _inBuf outBuf outOffset outLength ->
+setInBuf :: ForeignPtr Word8 -> Stream ()
+setInBuf inBuf = Stream $ \_stream _inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, ())
 
-getOutBuf :: M.Stream (ForeignPtr Word8)
-getOutBuf = M.Stream $ \_stream inBuf outBuf outOffset outLength ->
+getOutBuf :: Stream (ForeignPtr Word8)
+getOutBuf = Stream $ \_stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, outBuf)
 
-setOutBuf :: ForeignPtr Word8 -> M.Stream ()
-setOutBuf outBuf = M.Stream $ \_stream inBuf _outBuf outOffset outLength ->
+setOutBuf :: ForeignPtr Word8 -> Stream ()
+setOutBuf outBuf = Stream $ \_stream inBuf _outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, ())
 
-getOutOffset :: M.Stream Int
-getOutOffset = M.Stream $ \_stream inBuf outBuf outOffset outLength ->
+getOutOffset :: Stream Int
+getOutOffset = Stream $ \_stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, outOffset)
 
-setOutOffset :: Int -> M.Stream ()
-setOutOffset outOffset = M.Stream $ \_stream inBuf outBuf _ outLength ->
+setOutOffset :: Int -> Stream ()
+setOutOffset outOffset = Stream $ \_stream inBuf outBuf _ outLength ->
   return (inBuf, outBuf, outOffset, outLength, ())
 
-getOutAvail :: M.Stream Int
-getOutAvail = M.Stream $ \_stream inBuf outBuf outOffset outLength ->
+getOutAvail :: Stream Int
+getOutAvail = Stream $ \_stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, outLength)
 
-setOutAvail :: Int -> M.Stream ()
-setOutAvail outLength = M.Stream $ \_stream inBuf outBuf outOffset _ ->
+setOutAvail :: Int -> Stream ()
+setOutAvail outLength = Stream $ \_stream inBuf outBuf outOffset _ ->
   return (inBuf, outBuf, outOffset, outLength, ())
 
 ------------------------------------------------------------
 
-withStreamPtr :: (Ptr C.Stream -> IO a) -> M.Stream a
+withStreamPtr :: (Ptr C.Stream -> IO a) -> Stream a
 withStreamPtr f = do
   stream <- getStream
   liftIO $ C.withStream stream f
 
-getInAvail :: M.Stream Int
+getInAvail :: Stream Int
 getInAvail = do
   fromIntegral <$> withStreamPtr {# get lzma_stream.avail_in #}
 
-setInAvail :: Int -> M.Stream ()
+setInAvail :: Int -> Stream ()
 setInAvail n = withStreamPtr $ \p ->
   {# set lzma_stream.avail_in #} p (fromIntegral n)
 
-getInNext :: M.Stream (Ptr Word8)
+getInNext :: Stream (Ptr Word8)
 getInNext = castPtr <$> withStreamPtr {# get lzma_stream.next_in #}
 
-setInNext :: Ptr Word8 -> M.Stream ()
+setInNext :: Ptr Word8 -> Stream ()
 setInNext p' = withStreamPtr $ \p ->
   {# set lzma_stream.next_in #} p (castPtr p')
 
-getOutFree :: M.Stream Int
+getOutFree :: Stream Int
 getOutFree =
   fromIntegral <$> withStreamPtr {# get lzma_stream.avail_out #}
 
-setOutFree :: Int -> M.Stream ()
+setOutFree :: Int -> Stream ()
 setOutFree n = withStreamPtr $ \p ->
   {# set lzma_stream.avail_out #} p (fromIntegral n)
 
 #if DEBUG
-getOutNext :: M.Stream (Ptr Word8)
+getOutNext :: Stream (Ptr Word8)
 getOutNext = castPtr <$> withStreamPtr {# get lzma_stream.next_out #}
 #endif
 
-setOutNext :: Ptr Word8 -> M.Stream ()
+setOutNext :: Ptr Word8 -> Stream ()
 setOutNext p' = withStreamPtr $ \p ->
   {# set lzma_stream.next_out #} p (castPtr p')
 
--- | Initialize .xz M.Stream encoder using a preset number.
+-- | Initialize .xz Stream encoder using a preset number.
 --
 -- This function is intended for those who just want to use the basic features
 -- if liblzma (that is, most developers out there).
@@ -304,7 +368,7 @@ easyEncoder
   -- command line tool defaults to 'CheckCrc64', which is a good choice if you
   -- are unsure. 'CheckCrc32' is good too as long as the uncompressed file is
   -- not many gigabytes.
-  -> M.Stream C.Ret
+  -> Stream C.Ret
 easyEncoder preset check = do
   s <- getStream
   liftIO $ C.lzma_easy_encoder s preset check
@@ -320,16 +384,16 @@ autoDecoder
   -- limiter.
   -> C.Flags
   -- ^ @<>@ of flags, or @mempty@ for no flags.
-  -> M.Stream C.Ret
+  -> Stream C.Ret
 autoDecoder memLimit flags = do
   s <- getStream
   liftIO $ C.lzma_auto_decoder s memLimit flags
 
 -- | Encode or decode data.
 --
--- Once the 'M.Stream' has been successfully initialized, the actual encoding
+-- Once the 'Stream' has been successfully initialized, the actual encoding
 -- or decoding is done using this function.
-code :: C.Action -> M.Stream C.Ret
+code :: C.Action -> Stream C.Ret
 code action = do
 #ifdef DEBUG
   outNext <- getOutNext
@@ -340,10 +404,10 @@ code action = do
   liftIO $ C.lzma_code s action
 
 -- | Free memory allocated for the coder data structures.
-end :: M.Stream ()
+end :: Stream ()
 end = getStream >>= liftIO . C.lzma_end
 
-blockDecoder :: C.IndexIter -> C.Block -> IOVector C.Filter -> M.Stream C.Ret
+blockDecoder :: C.IndexIter -> C.Block -> IOVector C.Filter -> Stream C.Ret
 blockDecoder iter block filters = do
   streamFlags <- liftIO $ get $ C.indexIterStreamFlags iter
   unpaddedSize <- liftIO $ get $ C.indexIterBlockUnpaddedSize iter
@@ -385,10 +449,10 @@ blockDecoder iter block filters = do
 
 #if DEBUG
 
-debug :: Show a => a -> M.Stream ()
+debug :: Show a => a -> Stream ()
 debug = liftIO . hPrint stderr
 
-dump :: String -> M.Stream ()
+dump :: String -> Stream ()
 dump label = do
   inNext  <- getInNext
   inAvail <- getInAvail
@@ -416,7 +480,7 @@ dump label = do
     "  outTotal  = " ++ show outTotal  ++ "\n" ++
     "}"
 
-consistencyCheck :: M.Stream ()
+consistencyCheck :: Stream ()
 consistencyCheck = do
   outBuf <- getOutBuf
   outOffset <- getOutOffset
