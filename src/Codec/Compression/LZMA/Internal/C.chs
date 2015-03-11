@@ -103,10 +103,25 @@ module Codec.Compression.LZMA.Internal.C
   -- , lzma_index_buffer_encode
   -- , lzma_index_buffer_decode
   -- ** Iterator manipulation
-  , IndexIterPtr
-  , IndexIter(..)
-  , IndexIterStream(..)
-  , IndexIterBlock(..)
+  , IndexIter
+  , withIndexIter
+  , indexIterStreamFlags
+  , indexIterStreamNumber
+  , indexIterStreamBlockCount
+  , indexIterStreamCompressedOffset
+  , indexIterStreamUncompressedOffset
+  , indexIterStreamCompressedSize
+  , indexIterStreamUncompressedSize
+  , indexIterStreamPadding
+  , indexIterBlockNumberInFile
+  , indexIterBlockCompressedFileOffset
+  , indexIterBlockUncompressedFileOffset
+  , indexIterBlockNumberInStream
+  , indexIterBlockCompressedStreamOffset
+  , indexIterBlockUncompressedStreamOffset
+  , indexIterBlockUncompressedSize
+  , indexIterBlockUnpaddedSize
+  , indexIterBlockTotalSize
   , IndexIterMode(..)
 
   , lzma_index_iter_init
@@ -139,10 +154,9 @@ import Data.List (unfoldr)
 import Foreign
 import Foreign.C
 import Unsafe.Coerce (unsafeCoerce)
-import qualified GHC.Generics as GHC
 
 import Data.Vector.Storable.Mutable (IOVector)
-import Foreign.Var
+import Foreign.Var hiding (get)
 import qualified Data.Vector.Storable.Mutable as VM
 
 import Codec.Compression.LZMA.Internal.Constants
@@ -874,190 +888,175 @@ withIndexFPtr :: ForeignPtr Index -> (Index -> IO a) -> IO a
 withIndexFPtr fptr f = withForeignPtr fptr (peek >=> f)
 
 -- | Pointer to an 'IndexIter'.
-{# pointer *lzma_index_iter as IndexIterPtr foreign -> IndexIter #}
+{# pointer *lzma_index_iter as IndexIter foreign newtype #}
 
 peekIndexFPtr :: ForeignPtr Index -> IO Index
 peekIndexFPtr fptr = withIndexFPtr fptr return
 
--- | Iterator to get information about Blocks and Streams.
-data IndexIter = IndexIter
-  { indexIterStream :: {-# UNPACK #-} !IndexIterStream
-  , indexIterBlock :: {-# UNPACK #-} !IndexIterBlock
-  } deriving (Show, GHC.Generic)
+indexIterStreamFlags :: IndexIter -> GettableVar StreamFlags
+indexIterStreamFlags iter = get
+  where
+    get = withIndexIter iter {# get lzma_index_iter.stream.flags #}
 
-data IndexIterStream = IndexIterStream
-  { indexIterStreamFlags :: !StreamFlags
-  --
-  , indexIterStreamNumber :: {-# UNPACK #-} !VLI
-  -- ^ Stream number in the 'Index'.
-  --
-  -- The first Stream is 1.
-  , indexIterStreamBlockCount :: {-# UNPACK #-} !VLI
-  -- ^ Number of Blocks in the Stream.
-  --
-  -- If this is zero, the block structure below has undefined values.
-  , indexIterStreamCompressedOffset :: {-# UNPACK #-} !VLI
-  -- ^ Compressed start offset of this Stream.
-  --
-  -- The offset is relative to the beginning of the 'Index' (i.e. usually the
-  -- beginning of the .xz file).
-  , indexIterStreamUncompressedOffset :: {-# UNPACK #-} !VLI
-  -- ^ Uncompressed start offset of this Stream.
-  --
-  -- The offset is relative to the beginning of the 'Index' (i.e. usually the
-  -- beginning of the .xz file).
-  , indexIterStreamCompressedSize :: {-# UNPACK #-} !VLI
-  -- ^ Compressed size of this Stream.
-  --
-  -- This includes all headers except the possible Stream Padding after this
-  -- Stream.
-  , indexIterStreamUncompressedSize :: {-# UNPACK #-} !VLI
-  -- ^ Uncompressed size of this Stream.
-  , indexIterStreamPadding :: {-# UNPACK #-} !VLI
-  -- ^ Size of Stream Padding after this Stream.
-  } deriving (Show, GHC.Generic)
+-- | Stream number in the 'Index'.
+--
+-- The first Stream is 1.
+indexIterStreamNumber :: IndexIter -> GettableVar VLI
+indexIterStreamNumber iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.number #}
 
-data IndexIterBlock = IndexIterBlock
-  { indexIterBlockNumberInFile :: {-# UNPACK #-} !VLI
-  -- ^ Block number in the file.
-  --
-  -- The first Block is 1.
-  , indexIterBlockCompressedFileOffset :: {-# UNPACK #-} !VLI
-  -- ^ Compressed start offset of this Block.
-  --
-  -- This offset is relative to the beginning of the 'Index' (i.e. usually the
-  -- beginning of the .xz file). Normally this is where you should seek in the
-  -- .xz file to start decompressing this Block.
-  , indexIterBlockUncompressedFileOffset :: {-# UNPACK #-} !VLI
-  -- ^ Uncompressed start offset of this Block.
-  --
-  -- This offset is relative to the beginning of the 'Index' (i.e. usually the
-  -- beginning of the .xz file).
-  --
-  -- When doing random-access reading, it is possible that the target offset is
-  -- not exactly at Block boundary. One will need to compare the target offset
-  -- against 'indexIterBlockUncompressedFileOffset' or
-  -- 'indexIterBlockUncompressedStreamOffset', and possibly decode and throw
-  -- away some amount of data before reaching the target offset.
-  , indexIterBlockNumberInStream :: {-# UNPACK #-} !VLI
-  -- ^ Block number in this Stream.
-  --
-  -- The first Block is 1.
-  , indexIterBlockCompressedStreamOffset :: {-# UNPACK #-} !VLI
-  -- ^ Compressed start offset of this Block.
-  --
-  -- This offset is relative to the beginning of the Stream containing this
-  -- Block.
-  , indexIterBlockUncompressedStreamOffset :: {-# UNPACK #-} !VLI
-  -- ^ Uncompressed start offset of this Block.
-  --
-  -- This offset is relative to the beginning of the Stream containing this
-  -- Block.
-  , indexIterBlockUncompressedSize :: {-# UNPACK #-} !VLI
-  -- ^ Uncompressed size of this Block.
-  --
-  -- You should pass this to the Block decoder if you will decode this Block.
-  -- It will allow the Block decoder to validate the uncompressed size.
-  , indexIterBlockUnpaddedSize :: {-# UNPACK #-} !VLI
-  -- ^ Unpadded size of this Block.
-  --
-  -- You should pass this to the Block decoder if you will decode this Block.
-  -- It will allow the Block decoder to validate the unpadded size.
-  , indexIterBlockTotalSize :: {-# UNPACK #-} !VLI
-  -- ^ Total compressed size.
-  --
-  -- This includes all headers and padding in this Block. This is useful if you
-  -- need to know how many bytes the Block decoder will actually read.
-  } deriving (Show, GHC.Generic)
+-- | Number of Blocks in the Stream.
+--
+-- If this is zero, the block structure below has undefined values.
+indexIterStreamBlockCount :: IndexIter -> GettableVar VLI
+indexIterStreamBlockCount iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.block_count #}
 
-instance Storable IndexIter where
-  sizeOf _ = {# sizeof lzma_index_iter #}
-  alignment _ = {# alignof lzma_index_iter #}
-  peek p = IndexIter <$> stream <*> block
-    where
-      stream = do
-        indexIterStreamFlags <- {# get lzma_index_iter.stream.flags #} p
-        indexIterStreamNumber <-
-          toVLI <$> {# get lzma_index_iter.stream.number #} p
-        indexIterStreamBlockCount <-
-          toVLI <$> {# get lzma_index_iter.stream.block_count #} p
-        -- Offsets
-        indexIterStreamCompressedOffset <-
-          toVLI <$> {# get lzma_index_iter.stream.compressed_offset #} p
-        indexIterStreamUncompressedOffset <-
-          toVLI <$> {# get lzma_index_iter.stream.uncompressed_offset #} p
-        -- Sizes
-        indexIterStreamCompressedSize <-
-          toVLI <$> {# get lzma_index_iter.stream.compressed_size #} p
-        indexIterStreamUncompressedSize <-
-          toVLI <$> {# get lzma_index_iter.stream.uncompressed_size #} p
-        indexIterStreamPadding <-
-          toVLI <$> {# get lzma_index_iter.stream.padding #} p
-        return IndexIterStream {..}
+-- | Compressed start offset of this Stream.
+--
+-- The offset is relative to the beginning of the 'Index' (i.e. usually the
+-- beginning of the .xz file).
+indexIterStreamCompressedOffset :: IndexIter -> GettableVar VLI
+indexIterStreamCompressedOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.compressed_offset #}
 
-      block = do
-        -- Block position in the file
-        indexIterBlockNumberInFile <-
-          toVLI <$> {# get lzma_index_iter.block.number_in_file #} p
-        indexIterBlockCompressedFileOffset <-
-          toVLI <$> {# get lzma_index_iter.block.compressed_file_offset #} p
-        indexIterBlockUncompressedFileOffset <-
-          toVLI <$> {# get lzma_index_iter.block.uncompressed_file_offset #} p
-        -- Block position in the stream
-        indexIterBlockNumberInStream <-
-          toVLI <$> {# get lzma_index_iter.block.number_in_stream #} p
-        indexIterBlockCompressedStreamOffset <-
-          toVLI <$> {# get lzma_index_iter.block.compressed_stream_offset #} p
-        indexIterBlockUncompressedStreamOffset <-
-          toVLI <$> {# get lzma_index_iter.block.uncompressed_stream_offset #} p
-        -- Block size
-        indexIterBlockUncompressedSize <-
-          toVLI <$> {# get lzma_index_iter.block.uncompressed_size #} p
-        indexIterBlockUnpaddedSize <-
-          toVLI <$> {# get lzma_index_iter.block.unpadded_size #} p
-        indexIterBlockTotalSize <-
-          toVLI <$> {# get lzma_index_iter.block.total_size #} p
-        return IndexIterBlock {..}
-      toVLI = fromIntegral
-  poke p IndexIter {..} = do
-    let IndexIterStream {..} = indexIterStream
-    {# set lzma_index_iter.stream.flags #} p $
-      indexIterStreamFlags
-    {# set lzma_index_iter.stream.number #} p $
-      fromVLI indexIterStreamNumber
-    {# set lzma_index_iter.stream.block_count #} p $
-      fromVLI indexIterStreamBlockCount
-    {# set lzma_index_iter.stream.compressed_offset #} p $
-      fromVLI indexIterStreamCompressedOffset
-    {# set lzma_index_iter.stream.uncompressed_offset #} p $
-      fromVLI indexIterStreamUncompressedOffset
-    {# set lzma_index_iter.stream.compressed_size #} p $
-      fromVLI indexIterStreamCompressedSize
-    {# set lzma_index_iter.stream.uncompressed_size #} p $
-      fromVLI indexIterStreamUncompressedSize
-    {# set lzma_index_iter.stream.padding #} p $
-      fromVLI indexIterStreamPadding
-    let IndexIterBlock {..} = indexIterBlock
-    {# set lzma_index_iter.block.number_in_file #} p $
-      fromVLI indexIterBlockNumberInFile
-    {# set lzma_index_iter.block.compressed_file_offset #} p $
-      fromVLI indexIterBlockCompressedFileOffset
-    {# set lzma_index_iter.block.uncompressed_file_offset #} p $
-      fromVLI indexIterBlockUncompressedFileOffset
-    {# set lzma_index_iter.block.number_in_stream #} p $
-      fromVLI indexIterBlockNumberInStream
-    {# set lzma_index_iter.block.compressed_stream_offset #} p $
-      fromVLI indexIterBlockCompressedStreamOffset
-    {# set lzma_index_iter.block.uncompressed_stream_offset #} p $
-      fromVLI indexIterBlockUncompressedStreamOffset
-    {# set lzma_index_iter.block.uncompressed_size #} p $
-      fromVLI indexIterBlockUncompressedSize
-    {# set lzma_index_iter.block.unpadded_size #} p $
-      fromVLI indexIterBlockUnpaddedSize
-    {# set lzma_index_iter.block.total_size #} p $
-      fromVLI indexIterBlockTotalSize
-    where
-      fromVLI = fromIntegral
+-- | Uncompressed start offset of this Stream.
+--
+-- The offset is relative to the beginning of the 'Index' (i.e. usually the
+-- beginning of the .xz file).
+indexIterStreamUncompressedOffset :: IndexIter -> GettableVar VLI
+indexIterStreamUncompressedOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter  {# get lzma_index_iter.stream.uncompressed_offset #}
+
+-- | Compressed size of this Stream.
+--
+-- This includes all headers except the possible Stream Padding after this
+-- Stream.
+indexIterStreamCompressedSize :: IndexIter -> GettableVar VLI
+indexIterStreamCompressedSize iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.compressed_size #}
+
+-- | Uncompressed size of this Stream.
+indexIterStreamUncompressedSize :: IndexIter -> GettableVar VLI
+indexIterStreamUncompressedSize iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.uncompressed_size #}
+
+-- | Size of Stream Padding after this Stream.
+indexIterStreamPadding :: IndexIter -> GettableVar VLI
+indexIterStreamPadding iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.stream.padding #}
+
+-- | Block number in the file.
+--
+-- The first Block is 1.
+indexIterBlockNumberInFile :: IndexIter -> GettableVar VLI
+indexIterBlockNumberInFile iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.number_in_file #}
+
+-- | Compressed start offset of this Block.
+--
+-- This offset is relative to the beginning of the 'Index' (i.e. usually the
+-- beginning of the .xz file). Normally this is where you should seek in the
+-- .xz file to start decompressing this Block.
+indexIterBlockCompressedFileOffset :: IndexIter -> GettableVar VLI
+indexIterBlockCompressedFileOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.compressed_file_offset #}
+
+-- | Uncompressed start offset of this Block.
+--
+-- This offset is relative to the beginning of the 'Index' (i.e. usually the
+-- beginning of the .xz file).
+--
+-- When doing random-access reading, it is possible that the target offset is
+-- not exactly at Block boundary. One will need to compare the target offset
+-- against 'indexIterBlockUncompressedFileOffset' or
+-- 'indexIterBlockUncompressedStreamOffset', and possibly decode and throw
+-- away some amount of data before reaching the target offset.
+indexIterBlockUncompressedFileOffset :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedFileOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter
+        {# get lzma_index_iter.block.uncompressed_file_offset #}
+
+-- | Block number in this Stream.
+--
+-- The first Block is 1.
+indexIterBlockNumberInStream :: IndexIter -> GettableVar VLI
+indexIterBlockNumberInStream iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.number_in_stream #}
+
+-- | Compressed start offset of this Block.
+--
+-- This offset is relative to the beginning of the Stream containing this
+-- Block.
+indexIterBlockCompressedStreamOffset :: IndexIter -> GettableVar VLI
+indexIterBlockCompressedStreamOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter
+        {# get lzma_index_iter.block.compressed_stream_offset #}
+
+-- | Uncompressed start offset of this Block.
+--
+-- This offset is relative to the beginning of the Stream containing this
+-- Block.
+indexIterBlockUncompressedStreamOffset :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedStreamOffset iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter
+        {# get lzma_index_iter.block.uncompressed_stream_offset #}
+
+-- | Uncompressed size of this Block.
+--
+-- You should pass this to the Block decoder if you will decode this Block.
+-- It will allow the Block decoder to validate the uncompressed size.
+indexIterBlockUncompressedSize :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedSize iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.uncompressed_size #}
+
+-- | Unpadded size of this Block.
+--
+-- You should pass this to the Block decoder if you will decode this Block.
+-- It will allow the Block decoder to validate the unpadded size.
+indexIterBlockUnpaddedSize :: IndexIter -> GettableVar VLI
+indexIterBlockUnpaddedSize iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.unpadded_size #}
+
+-- | Total compressed size.
+--
+-- This includes all headers and padding in this Block. This is useful if you
+-- need to know how many bytes the Block decoder will actually read.
+indexIterBlockTotalSize :: IndexIter -> GettableVar VLI
+indexIterBlockTotalSize iter = get
+  where
+    get = fromIntegral <$>
+      withIndexIter iter {# get lzma_index_iter.block.total_size #}
 
 -- | Operation mode for 'lzma_index_iter_next'
 {# enum lzma_index_iter_mode as IndexIterMode
@@ -1291,18 +1290,18 @@ instance Storable IndexIter where
 lzma_index_iter_init
   :: Index
   -- ^ 'Index' to which the iterator will be associated
-  -> IO IndexIterPtr
+  -> IO IndexIter
 lzma_index_iter_init index = do
   iterFPtr <- mallocForeignPtrBytes {# sizeof lzma_index_iter #}
   withForeignPtr iterFPtr $ \iterPtr ->
     {# call lzma_index_iter_init as c_lzma_index_iter_init #} iterPtr index
-  return iterFPtr
+  return $ IndexIter iterFPtr
 
 -- | Rewind the iterator.
 --
 -- Rewind the iterator so that next call to 'lzma_index_iter_next' will return
 -- the first Block or Stream.
-{# fun lzma_index_iter_rewind { `IndexIterPtr' } -> `()' #}
+{# fun lzma_index_iter_rewind { `IndexIter' } -> `()' #}
 
 -- | Get the next Block or Stream.
 --
@@ -1312,7 +1311,7 @@ lzma_index_iter_init index = do
 -- mode is set to an unknown value, 'IndexIter' is not modified and this
 -- function returns 'True'.
 {# fun lzma_index_iter_next
-  { `IndexIterPtr'
+  { `IndexIter'
   -- ^ Iterator initialized with 'lzma_index_iter_init'.
   , `IndexIterMode'
   -- ^ Specify what kind of information the caller wants to get.
@@ -1325,7 +1324,7 @@ lzma_index_iter_init index = do
 -- 'Index' field(s) and use 'lzma_index_iter_locate' to do random-access
 -- reading with granularity of Block size.
 {# fun lzma_index_iter_locate
-  { `IndexIterPtr'
+  { `IndexIter'
   -- ^ Iterator that was earlier initialized with 'lzma_index_iter_init'.
   , fromIntegral `VLI'
   -- ^ Uncompressed target offset which the caller would like to locate from
@@ -1402,6 +1401,6 @@ instance PrettyVal IndexIterBlock
 instance PrettyVal StreamFlags where
   prettyVal = Pretty.String . show
 
-dumpIndexIter :: IndexIterPtr -> IO ()
+dumpIndexIter :: IndexIter -> IO ()
 dumpIndexIter iter = withForeignPtr iter peek >>= traceM . Pretty.dumpStr
 #endif

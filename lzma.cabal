@@ -59,6 +59,7 @@ executable xz-list
   build-depends:
       base
     , bytestring
+    , foreign-var
     , lzma
     , mtl
   ghc-options: -Wall
