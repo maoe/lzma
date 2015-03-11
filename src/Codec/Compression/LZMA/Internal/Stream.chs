@@ -64,6 +64,7 @@ import Control.Monad.ST
 import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Control.Monad.Trans (liftIO)
 import Data.Vector.Storable.Mutable (IOVector)
+import Foreign.Var
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
 {# import Codec.Compression.LZMA.Internal.C #}
@@ -352,7 +353,7 @@ blockDecoder IndexIter {..} block filters = do
     lzma_set_block_version block 0
     lzma_set_block_filters block filters
 
-    check <- lzma_get_stream_flags_check indexIterStreamFlags
+    check <- get $ streamFlagsCheck indexIterStreamFlags
     lzma_set_block_check block check
 
     firstByte <- peek inNext
