@@ -15,6 +15,11 @@ cabal-version: >=1.10
 
 flag debug
   default: False
+  manual: True
+
+flag examples
+  default: False
+  manual: True
 
 library
   exposed-modules:
@@ -53,7 +58,8 @@ library
   default-language: Haskell2010
 
 executable xz-list
-  -- buildable: False
+  if !flag(examples)
+    buildable: False
   main-is: xz-list.hs
   build-depends:
       base
@@ -66,7 +72,8 @@ executable xz-list
   default-language: Haskell2010
 
 executable xz-seek
-  -- buildable: False
+  if !flag(examples)
+    buildable: False
   main-is: xz-seek.hs
   build-depends:
       base
@@ -79,7 +86,8 @@ executable xz-seek
   default-language: Haskell2010
 
 executable xz-cat
-  -- buildable: False
+  if !flag(examples)
+    buildable: False
   main-is: xz-cat.hs
   build-depends:
       base
@@ -124,5 +132,5 @@ source-repository head
 
 source-repository this
   type: git
-  tag: v0.9.0
+  tag: v0.0.0
   location: https://github.com/maoe/lzma.git
