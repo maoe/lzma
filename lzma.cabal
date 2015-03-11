@@ -35,7 +35,7 @@ library
     , foreign-var == 0.1
     , mtl >= 2.2 && < 2.3
     , pipes >= 4.1 && < 4.2
-    , pipes-safe
+    , pipes-safe >= 2.2 && < 2.3
     , tagged >= 0.7 && < 0.8
     , vector >= 0.10 && < 0.11
   build-tools: c2hs >= 0.19.1
