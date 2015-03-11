@@ -24,8 +24,8 @@ module Codec.Compression.LZMA.Internal.Stream
   , blockDecoder
 
   -- ** Basic types
-  , Ret(..), ErrorCode(..)
-  , Action(..)
+  , C.Ret(..), C.ErrorCode(..)
+  , C.Action(..)
 
   -- * Buffer manipulation
   , flushBuffers
@@ -67,8 +67,9 @@ import Data.Vector.Storable.Mutable (IOVector)
 import Foreign.Var
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
-{# import Codec.Compression.LZMA.Internal.C #}
+{# import Codec.Compression.LZMA.Internal.C #} ()
 import Codec.Compression.LZMA.Internal.Types
+import qualified Codec.Compression.LZMA.Internal.C as C
 import qualified Codec.Compression.LZMA.Internal.Stream.Monad as M
 
 #ifdef DEBUG
@@ -168,11 +169,11 @@ flushBuffers = do
 
 ------------------------------------------------------------
 
-compress :: M.Stream Ret
+compress :: M.Stream C.Ret
 compress = do
   undefined
 
-decompress :: Action -> M.Stream Ret
+decompress :: C.Action -> M.Stream C.Ret
 decompress action = do
   outFree <- getOutFree
 
@@ -192,7 +193,7 @@ decompress action = do
 
 -- | Opaque data type to hold the underlying state in the 'M.Stream' monad.
 data State s = State
-  { stateStream :: !Stream
+  { stateStream :: !C.Stream
   , stateInBuf :: !(ForeignPtr Word8)
   , stateOutBuf :: !(ForeignPtr Word8)
   , stateOutOffset :: !Int
@@ -201,7 +202,7 @@ data State s = State
 
 newState :: ST s (State s)
 newState = unsafeIOToST $ do
-  stream <- newStream
+  stream <- C.newStream
   return $ State stream S.nullForeignPtr S.nullForeignPtr 0 0
 
 runStream :: M.Stream a -> State s -> ST s (a, State s)
@@ -210,7 +211,7 @@ runStream (M.Stream m) (State {..}) = unsafeIOToST $ do
     m stateStream stateInBuf stateOutBuf stateOutOffset stateOutLength
   return (a, State stateStream inBuf outBuf outOff outLen)
 
-getStream :: M.Stream Stream
+getStream :: M.Stream C.Stream
 getStream = M.Stream $ \stream inBuf outBuf outOffset outLength ->
   return (inBuf, outBuf, outOffset, outLength, stream)
 
@@ -248,10 +249,10 @@ setOutAvail outLength = M.Stream $ \_stream inBuf outBuf outOffset _ ->
 
 ------------------------------------------------------------
 
-withStreamPtr :: (Ptr Stream -> IO a) -> M.Stream a
+withStreamPtr :: (Ptr C.Stream -> IO a) -> M.Stream a
 withStreamPtr f = do
   stream <- getStream
-  liftIO $ withStream stream f
+  liftIO $ C.withStream stream f
 
 getInAvail :: M.Stream Int
 getInAvail = do
@@ -290,7 +291,7 @@ setOutNext p' = withStreamPtr $ \p ->
 -- This function is intended for those who just want to use the basic features
 -- if liblzma (that is, most developers out there).
 easyEncoder
-  :: Preset
+  :: C.Preset
   -- ^ Compression preset to use.
   --
   -- A preset consist of level number and zero or
@@ -298,15 +299,15 @@ easyEncoder
   -- which match the options -0 ... -9 of the xz command line tool. Additional
   -- flags can be be set using '<>' from @Monoid@ with the preset level number,
   -- e.g. @'customPreset' 6 <> 'extremePreset'@.
-  -> Check
+  -> C.Check
   -- ^ Integrity check type to use. See 'Check' for available checks. The xz
   -- command line tool defaults to 'CheckCrc64', which is a good choice if you
   -- are unsure. 'CheckCrc32' is good too as long as the uncompressed file is
   -- not many gigabytes.
-  -> M.Stream Ret
+  -> M.Stream C.Ret
 easyEncoder preset check = do
   s <- getStream
-  liftIO $ lzma_easy_encoder s preset check
+  liftIO $ C.lzma_easy_encoder s preset check
 
 -- | Decode .xz Streams and .lzma files with autodetection.
 
@@ -317,18 +318,18 @@ autoDecoder
   :: Word64
   -- ^ Memory usage limit as bytes. Use 'maxBound' to effectively disable the
   -- limiter.
-  -> Flags
+  -> C.Flags
   -- ^ @<>@ of flags, or @mempty@ for no flags.
-  -> M.Stream Ret
+  -> M.Stream C.Ret
 autoDecoder memLimit flags = do
   s <- getStream
-  liftIO $ lzma_auto_decoder s memLimit flags
+  liftIO $ C.lzma_auto_decoder s memLimit flags
 
 -- | Encode or decode data.
 --
 -- Once the 'M.Stream' has been successfully initialized, the actual encoding
 -- or decoding is done using this function.
-code :: Action -> M.Stream Ret
+code :: C.Action -> M.Stream C.Ret
 code action = do
 #ifdef DEBUG
   outNext <- getOutNext
@@ -336,47 +337,47 @@ code action = do
   assert (not (outNext == nullPtr && outFree > 0)) $ return ()
 #endif
   s <- getStream
-  liftIO $ lzma_code s action
+  liftIO $ C.lzma_code s action
 
 -- | Free memory allocated for the coder data structures.
 end :: M.Stream ()
-end = getStream >>= liftIO . lzma_end
+end = getStream >>= liftIO . C.lzma_end
 
-blockDecoder :: IndexIter -> Block -> IOVector Filter -> M.Stream Ret
+blockDecoder :: C.IndexIter -> C.Block -> IOVector C.Filter -> M.Stream C.Ret
 blockDecoder iter block filters = do
-  streamFlags <- liftIO $ get $ indexIterStreamFlags iter
-  unpaddedSize <- liftIO $ get $ indexIterBlockUnpaddedSize iter
+  streamFlags <- liftIO $ get $ C.indexIterStreamFlags iter
+  unpaddedSize <- liftIO $ get $ C.indexIterBlockUnpaddedSize iter
 
   inNext <- getInNext
 
   liftIO $ do
-    blockVersion block $= 0
-    blockFilters block $= filters
+    C.blockVersion block $= 0
+    C.blockFilters block $= filters
 
-    check <- get $ streamFlagsCheck streamFlags
-    blockCheck block $= check
+    check <- get $ C.streamFlagsCheck streamFlags
+    C.blockCheck block $= check
 
     firstByte <- peek inNext
-    blockHeaderSize block $= lzma_block_header_size_decode firstByte
+    C.blockHeaderSize block $= C.lzma_block_header_size_decode firstByte
 
   inAvail <- getInAvail
-  handleRet $ liftIO $ lzma_block_header_decode block inNext
+  handleRet $ liftIO $ C.lzma_block_header_decode block inNext
 
   handleRet $
-    liftIO $ lzma_block_compressed_size block unpaddedSize
+    liftIO $ C.lzma_block_compressed_size block unpaddedSize
 
-  headerSize <- liftIO $ get $ blockHeaderSize block
+  headerSize <- liftIO $ get $ C.blockHeaderSize block
 
   setInNext $ inNext `advancePtr` fromIntegral headerSize
   setInAvail $ inAvail - fromIntegral headerSize
 
   stream <- getStream
-  liftIO $ lzma_block_decoder stream block
+  liftIO $ C.lzma_block_decoder stream block
   where
     handleRet m = do
       ret <- m
       case ret of
-        Error errorCode -> throwM (LZMAErrorCode errorCode)
+        C.Error errorCode -> throwM (LZMAErrorCode errorCode)
         _ -> return ()
 
 ------------------------------------------------------------
