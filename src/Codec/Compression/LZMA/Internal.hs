@@ -296,7 +296,7 @@ seekableDecompressStream params index req0 = do
 
     -- | Decode a new block
     decodeBlock
-      :: C.IndexIterPtr
+      :: C.IndexIter
       -> ReadRequest 'Uncompressed
       -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     decodeBlock iter req = do
@@ -305,22 +305,25 @@ seekableDecompressStream params index req0 = do
       liftIO $ C.dumpIndexIter iter
       traceM $ "decodeBlock " ++ show iter ++ " " ++ show req
 #endif
-      indexIter@C.IndexIter {..} <- liftIO $ withForeignPtr iter peek
+      blockCount <- liftIO $ get $ C.indexIterStreamBlockCount iter
+      compressedFileOffset <-
+        liftIO $ get $ C.indexIterBlockCompressedFileOffset iter
+      uncompressedFileOffset <-
+        liftIO $ get $ C.indexIterBlockUncompressedFileOffset iter
+      blockNumberInStream <-
+        liftIO $ get $ C.indexIterBlockNumberInStream iter
       let
-        C.IndexIterStream {indexIterStreamBlockCount} = indexIterStream
-        C.IndexIterBlock {..} = indexIterBlock
         blockPos :: Position 'Compressed
-        blockPos = fromIntegral indexIterBlockCompressedFileOffset
+        blockPos = fromIntegral compressedFileOffset
         blockUncompPos :: Position 'Uncompressed
-        blockUncompPos = fromIntegral indexIterBlockUncompressedFileOffset
+        blockUncompPos = fromIntegral uncompressedFileOffset
       -- Check if the block number doesn't exceed the total block count.
-      assert (indexIterBlockNumberInStream <= indexIterStreamBlockCount) $
-        return ()
+      assert (blockNumberInStream <= blockCount) $ return ()
       isLastChunk <- fillBuffers params (PRead blockPos)
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
       handleRet "Failed to initialize a block decoder" $
-        lift $ Stream.blockDecoder indexIter block filters
+        lift $ Stream.blockDecoder iter block filters
 #if DEBUG
       lift $ Stream.dump "decodeBlock"
 #endif
@@ -342,7 +345,7 @@ seekableDecompressStream params index req0 = do
       Read -> 0
 
     fillBuffers'
-      :: C.IndexIterPtr
+      :: C.IndexIter
       -> ReadRequest 'Compressed
       -> Int -- ^ Offset from the beginning of the block to the target position
       -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
@@ -351,7 +354,7 @@ seekableDecompressStream params index req0 = do
       drainBuffers iter isLastChunk skipBytes
 
     drainBuffers
-      :: C.IndexIterPtr
+      :: C.IndexIter
       -> Bool -- ^ Last chunk or not
       -> Int -- ^ Offset from the beginning of the block to the target position
       -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
@@ -401,7 +404,7 @@ seekableDecompressStream params index req0 = do
 --
 -- This function return true when the block is found.
 locateBlock
-  :: C.IndexIterPtr
+  :: C.IndexIter
   -> ReadRequest 'Uncompressed
   -> SeekableDecompressStream Stream Bool
 locateBlock iter req = not <$> liftIO act

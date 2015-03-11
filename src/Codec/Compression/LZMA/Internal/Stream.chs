@@ -343,9 +343,9 @@ end :: M.Stream ()
 end = getStream >>= liftIO . lzma_end
 
 blockDecoder :: IndexIter -> Block -> IOVector Filter -> M.Stream Ret
-blockDecoder IndexIter {..} block filters = do
-  let IndexIterStream {indexIterStreamFlags} = indexIterStream
-      IndexIterBlock {indexIterBlockUnpaddedSize} = indexIterBlock
+blockDecoder iter block filters = do
+  streamFlags <- liftIO $ get $ indexIterStreamFlags iter
+  unpaddedSize <- liftIO $ get $ indexIterBlockUnpaddedSize iter
 
   inNext <- getInNext
 
@@ -353,7 +353,7 @@ blockDecoder IndexIter {..} block filters = do
     blockVersion block $= 0
     blockFilters block $= filters
 
-    check <- get $ streamFlagsCheck indexIterStreamFlags
+    check <- get $ streamFlagsCheck streamFlags
     blockCheck block $= check
 
     firstByte <- peek inNext
@@ -363,7 +363,7 @@ blockDecoder IndexIter {..} block filters = do
   handleRet $ liftIO $ lzma_block_header_decode block inNext
 
   handleRet $
-    liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
+    liftIO $ lzma_block_compressed_size block unpaddedSize
 
   headerSize <- liftIO $ get $ blockHeaderSize block
 

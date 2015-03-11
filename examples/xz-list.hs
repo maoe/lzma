@@ -5,12 +5,11 @@ module Main where
 import Control.Monad
 import Data.Function (fix)
 import Data.List (intercalate)
-import Foreign
 import System.Environment
 import System.IO
 
-import Codec.Compression.LZMA.Internal
-import Codec.Compression.LZMA.Internal.C (Index, IndexIter(..))
+import Codec.Compression.LZMA.Incremental
+import Foreign.Var
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf
@@ -48,17 +47,22 @@ printStreams index = do
   fix $ \loop -> do
     notFound <- C.lzma_index_iter_next iter C.IndexIterStreamMode
     unless notFound $ do
-      C.IndexIter {..} <- withForeignPtr iter peek
-      let C.IndexIterStream {..} = indexIterStream
+      number <- get $ C.indexIterStreamNumber iter
+      blockCount <- get $ C.indexIterStreamBlockCount iter
+      compressedOffset <- get $ C.indexIterStreamCompressedOffset iter
+      uncompressedOffset <- get $ C.indexIterStreamUncompressedOffset iter
+      compressedSize <- get $ C.indexIterStreamCompressedSize iter
+      uncompressedSize <- get $ C.indexIterStreamUncompressedSize iter
+      padding <- get $ C.indexIterStreamPadding iter
       let format = printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
       format
-        (show indexIterStreamNumber)
-        (show indexIterStreamBlockCount)
-        (show indexIterStreamCompressedOffset)
-        (show indexIterStreamUncompressedOffset)
-        (show indexIterStreamCompressedSize)
-        (show indexIterStreamUncompressedSize)
-        (show indexIterStreamPadding)
+        (show number)
+        (show blockCount)
+        (show compressedOffset)
+        (show uncompressedOffset)
+        (show compressedSize)
+        (show uncompressedSize)
+        (show padding)
       loop
 
 printBlocks :: Index -> IO ()
@@ -67,15 +71,18 @@ printBlocks index = do
   fix $ \loop -> do
     notFound <- C.lzma_index_iter_next iter C.IndexIterBlockMode
     unless notFound $ do
-      C.IndexIter {..} <- withForeignPtr iter peek
-      let C.IndexIterStream {indexIterStreamNumber} = indexIterStream
-      let C.IndexIterBlock {..} = indexIterBlock
+      streamNumber <- get $ C.indexIterStreamNumber iter
+      numberInStream <- get $ C.indexIterBlockNumberInFile iter
+      compressedFileOffset <- get $ C.indexIterBlockCompressedFileOffset iter
+      uncompressedFileOffset <- get $ C.indexIterBlockUncompressedFileOffset iter
+      totalSize <- get $ C.indexIterBlockTotalSize iter
+      uncompressedSize <- get $ C.indexIterBlockUncompressedSize iter
       let format = printf "%s\t%s\t%s\t%s\t%s\t%s\n"
       format
-        (show indexIterStreamNumber)
-        (show indexIterBlockNumberInStream)
-        (show indexIterBlockCompressedFileOffset)
-        (show indexIterBlockUncompressedFileOffset)
-        (show indexIterBlockTotalSize)
-        (show indexIterBlockUncompressedSize)
+        (show streamNumber)
+        (show numberInStream)
+        (show compressedFileOffset)
+        (show uncompressedFileOffset)
+        (show totalSize)
+        (show uncompressedSize)
       loop
