@@ -598,7 +598,7 @@ parseStreamFooter = loop 0
           footer <- lift ID.getStreamFooter
           handleRet "Failed to decode a stream footer." $
             liftIO $ withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
-          version <- liftIO $ C.lzma_get_stream_flags_version footer
+          version <- liftIO $ get $ C.streamFlagsVersion footer
           unless (version ==  0) $
             lift $ throwM $ DecodeError C.OptionsError
               "The stream footer specifies something that we don't support."
@@ -619,7 +619,7 @@ containsStreamPadding = S.all (== 0) . S.take 4 . S.drop 8
 getIndexSize :: IndexDecoder C.VLI
 getIndexSize = do
   footer <- ID.getStreamFooter
-  liftIO $ C.lzma_stream_flags_backward_size footer
+  liftIO $ get $ C.streamFlagsBackwardSize footer
 
 -- | Decode a stream index.
 parseIndex

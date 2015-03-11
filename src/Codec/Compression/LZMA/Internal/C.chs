@@ -23,9 +23,9 @@ module Codec.Compression.LZMA.Internal.C
   , allocaStreamFlags
   , mallocStreamFlags
   , freeStreamFlags
-  , lzma_get_stream_flags_check
-  , lzma_get_stream_flags_version
-  , lzma_stream_flags_backward_size
+  , streamFlagsCheck
+  , streamFlagsVersion
+  , streamFlagsBackwardSize
   , streamHeaderSize
   , lzma_stream_header_decode
   , lzma_stream_footer_decode
@@ -458,13 +458,13 @@ mallocStreamFlags = StreamFlags <$> malloc
 freeStreamFlags :: StreamFlags -> IO ()
 freeStreamFlags (StreamFlags ptr) = free ptr
 
-lzma_get_stream_flags_check :: StreamFlags -> IO Check
-lzma_get_stream_flags_check flags = do
+streamFlagsCheck :: StreamFlags -> GettableVar Check
+streamFlagsCheck flags = do
   n <- {# get lzma_stream_flags.check #} flags
   return $ toEnum $ fromIntegral n
 
-lzma_get_stream_flags_version :: StreamFlags -> IO Word32
-lzma_get_stream_flags_version flags = do
+streamFlagsVersion :: StreamFlags -> GettableVar Word32
+streamFlagsVersion flags = do
   version <- {# get lzma_stream_flags.version #} flags
   return $ fromIntegral version
 
@@ -481,8 +481,9 @@ lzma_get_stream_flags_version flags = do
 -- 'lzma_stream_header_decode' always sets @backward_size@ to @LZMA_VLI_UNKNOWN@
 -- so that it is convenient to use 'lzma_stream_flags_compare' when both Stream
 -- Header and Stream Footer have been decoded.
-lzma_stream_flags_backward_size :: StreamFlags -> IO VLI
-lzma_stream_flags_backward_size flags =
+
+streamFlagsBackwardSize :: StreamFlags -> GettableVar VLI
+streamFlagsBackwardSize flags =
   fromIntegral <$> {# get lzma_stream_flags.backward_size #} flags
 
 -- | Size of Stream Header and Stream Footer.
