@@ -228,9 +228,9 @@ newStream = do
   return $ Stream fptr
 
 streamAvailIn :: Stream -> Var Int
-streamAvailIn stream = Var get' set
+streamAvailIn stream = Var get set
   where
-    get' = fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
+    get = fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
     set inAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
@@ -596,9 +596,9 @@ blockVersion block = SettableVar set
         {# set lzma_block.version #} blockPtr (fromIntegral version)
 
 blockHeaderSize :: Block -> Var Word32
-blockHeaderSize block = Var get' set
+blockHeaderSize block = Var get set
   where
-    get' =
+    get =
       withBlock block $ \blockPtr ->
         fromIntegral <$> {# get lzma_block.header_size #} blockPtr
     set size =
