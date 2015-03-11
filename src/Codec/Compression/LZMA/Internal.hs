@@ -58,6 +58,7 @@ import System.IO
 
 import Control.Monad.Catch
 import Control.Monad.Trans
+import Foreign.Var
 import Pipes hiding (next, void)
 import Pipes.Core
 import Pipes.Safe ()
@@ -640,14 +641,14 @@ parseIndex bufSize = do
     loop stream indexSize = do
       let inAvail :: Integral a => a
           inAvail = fromIntegral $ min bufSize indexSize
-      liftIO $ C.setStreamAvailIn stream inAvail
+      liftIO $ C.streamAvailIn stream $=! inAvail
       chunk <- do
         pos <- lift ID.getPosition
         pread pos inAvail
       lift $ ID.modifyPosition' (+ inAvail)
       let indexSize' = indexSize - inAvail
       ret <- liftIO $ withByteString chunk $ \inPtr -> do
-        C.setStreamNextIn stream inPtr
+        C.streamNextIn stream $= inPtr
         C.lzma_code stream C.Run
       case ret of
         C.Ok -> loop stream indexSize'
@@ -658,7 +659,7 @@ parseIndex bufSize = do
         C.Error code ->
           lift $ throwM $ DecodeError code "The index decoder faild."
         C.StreamEnd -> do
-          inAvail' <- liftIO $ C.getStreamAvailIn stream
+          inAvail' <- liftIO $ get $ C.streamAvailIn stream
           unless (indexSize' == 0 && inAvail' == 0) $
             lift $ throwM $ DecodeError C.DataError $
               "The index decoder didn't consume as much input as indicated " ++
