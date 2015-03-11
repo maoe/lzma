@@ -57,7 +57,7 @@ module Codec.Compression.LZMA.Internal.C
 
   -- * Filter
   , Filter(..)
-  , FilterPtr
+  , BCJFilter(..)
   , newFilters
   , newFiltersMaxLength
   , touchFilters
@@ -829,8 +829,6 @@ instance Storable Filter where
   poke p Filter {..} = do
     {# set lzma_filter.id #} p (fromIntegral $ fromEnum filterId)
     {# set lzma_filter.options #} p filterOptions
-
-{# pointer *lzma_filter as FilterPtr foreign -> Filter #}
 
 filtersMax :: Int
 filtersMax = {# const LZMA_FILTERS_MAX #}
