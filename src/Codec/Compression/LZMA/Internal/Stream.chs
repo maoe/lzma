@@ -64,6 +64,7 @@ import Control.Monad.ST
 import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Control.Monad.Trans (liftIO)
 import Data.Vector.Storable.Mutable (IOVector)
+import Foreign.Var
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
 {# import Codec.Compression.LZMA.Internal.C #}
@@ -342,32 +343,32 @@ end :: M.Stream ()
 end = getStream >>= liftIO . lzma_end
 
 blockDecoder :: IndexIter -> Block -> IOVector Filter -> M.Stream Ret
-blockDecoder IndexIter {..} block filters = do
-  let IndexIterStream {indexIterStreamFlags} = indexIterStream
-      IndexIterBlock {indexIterBlockUnpaddedSize} = indexIterBlock
+blockDecoder iter block filters = do
+  streamFlags <- liftIO $ get $ indexIterStreamFlags iter
+  unpaddedSize <- liftIO $ get $ indexIterBlockUnpaddedSize iter
 
   inNext <- getInNext
 
   liftIO $ do
-    lzma_set_block_version block 0
-    lzma_set_block_filters block filters
+    blockVersion block $= 0
+    blockFilters block $= filters
 
-    check <- lzma_get_stream_flags_check indexIterStreamFlags
-    lzma_set_block_check block check
+    check <- get $ streamFlagsCheck streamFlags
+    blockCheck block $= check
 
     firstByte <- peek inNext
-    lzma_set_block_header_size block $ lzma_block_header_size_decode firstByte
+    blockHeaderSize block $= lzma_block_header_size_decode firstByte
 
   inAvail <- getInAvail
   handleRet $ liftIO $ lzma_block_header_decode block inNext
 
   handleRet $
-    liftIO $ lzma_block_compressed_size block indexIterBlockUnpaddedSize
+    liftIO $ lzma_block_compressed_size block unpaddedSize
 
-  blockHeaderSize <- liftIO $ lzma_get_block_header_size block
+  headerSize <- liftIO $ get $ blockHeaderSize block
 
-  setInNext $ inNext `advancePtr` fromIntegral blockHeaderSize
-  setInAvail $ inAvail - fromIntegral blockHeaderSize
+  setInNext $ inNext `advancePtr` fromIntegral headerSize
+  setInAvail $ inAvail - fromIntegral headerSize
 
   stream <- getStream
   liftIO $ lzma_block_decoder stream block
