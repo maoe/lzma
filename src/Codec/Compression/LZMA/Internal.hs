@@ -285,7 +285,7 @@ seekableDecompressStream
   -- ^ Initial request
   -> SeekableDecompressStream Stream ()
 seekableDecompressStream params index req0 = do
-  iter <- liftIO $ C.lzma_index_iter_init index
+  iter <- liftIO $ C.indexIterInit index
   decodeLoop iter req0
   where
     decodeLoop iter req = do
@@ -412,10 +412,10 @@ locateBlock iter req = not <$> liftIO act
     act = case req of
       -- If the request has a position, decode the block which contains the
       -- position.
-      PRead pos -> C.lzma_index_iter_locate iter (fromIntegral pos)
+      PRead pos -> C.indexIterLocate iter (fromIntegral pos)
       -- If the request doesn't have a position, continue reading bytes from
       -- the current position.
-      Read -> C.lzma_index_iter_next iter C.IndexIterNonEmptyBlockMode
+      Read -> C.indexIterNext iter C.IndexIterNonEmptyBlockMode
 
 fillBuffers :: DecompressParams -> r -> Proxy r S.ByteString y' y Stream Bool
 fillBuffers DecompressParams {..} req = do
@@ -562,7 +562,7 @@ decodeIndexStream fileSize = do
       when (pos > 0) $ do
         index' <- decodeIndex1
         handleRet "Failed to concatenate indicies." $
-          liftIO $ C.lzma_index_cat index index'
+          liftIO $ C.indexCat index index'
         loop index
 
 -- | Parse an index
@@ -573,7 +573,7 @@ decodeIndex1 = do
   parseStreamHeader index
   checkIntegrity index
   handleRet "Failed to set stream padding" $
-    liftIO $ C.lzma_index_stream_padding index padding
+    liftIO $ C.indexStreamPadding index padding
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
 
@@ -600,7 +600,7 @@ parseStreamFooter = loop 0
           lift $ ID.setPosition $ endPos - footerSize
           footer <- lift ID.getStreamFooter
           handleRet "Failed to decode a stream footer." $
-            liftIO $ withForeignPtr inFPtr $ C.lzma_stream_footer_decode footer
+            liftIO $ withForeignPtr inFPtr $ C.streamFooterDecode footer
           version <- liftIO $ get $ C.streamFlagsVersion footer
           unless (version ==  0) $
             lift $ throwM $ DecodeError C.OptionsError
@@ -633,7 +633,7 @@ parseIndex bufSize = do
   -- Set posision to the beginning of the index.
   lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
   stream <- liftIO C.newStream
-  (ret, indexFPtr) <- liftIO $ C.lzma_index_decoder stream maxBound -- FIXME: Set proper value
+  (ret, indexFPtr) <- liftIO $ C.indexDecoder stream maxBound -- FIXME: Set proper value
   unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
     "Failed to initialize an index decoder."
 
@@ -652,7 +652,7 @@ parseIndex bufSize = do
       let indexSize' = indexSize - inAvail
       ret <- liftIO $ withByteString chunk $ \inPtr -> do
         C.streamNextIn stream $= inPtr
-        C.lzma_code stream C.Run
+        C.code stream C.Run
       case ret of
         C.Ok -> loop stream indexSize'
         C.Error C.BufError ->
@@ -676,14 +676,14 @@ parseStreamHeader
 parseStreamHeader index = do
   indexSize <- lift getIndexSize
   lift $ ID.modifyPosition' (subtract $ fromIntegral indexSize + headerSize)
-  blocksSize <- liftIO $ C.lzma_index_total_size index
+  blocksSize <- liftIO $ C.indexTotalSize index
   lift $ ID.modifyPosition' (subtract $ fromIntegral blocksSize)
   chunk <- do
     pos <- lift ID.getPosition
     pread pos headerSize
   header <- lift ID.getStreamHeader
   handleRet "Failed to decode a stream header." $
-    liftIO $ withByteString chunk $ C.lzma_stream_header_decode header
+    liftIO $ withByteString chunk $ C.streamHeaderDecode header
 
 checkIntegrity
   :: C.Index
@@ -692,12 +692,12 @@ checkIntegrity index = do
   header <- lift ID.getStreamHeader
   footer <- lift ID.getStreamFooter
   handleRet "The stream header and the footer didn't agree." $
-    liftIO $ C.lzma_stream_flags_compare header footer
+    liftIO $ C.streamFlagsCompare header footer
   handleRet "Failed to set the footer to the index." $
-    liftIO $ C.lzma_index_stream_flags index footer
+    liftIO $ C.indexStreamFlags index footer
   padding <- lift ID.getStreamPadding
   handleRet "Failed to set stream padding to the index." $
-    liftIO $ C.lzma_index_stream_padding index padding
+    liftIO $ C.indexStreamPadding index padding
 
 indexDecodingToIO
   :: DecodeStream IndexDecoder a
