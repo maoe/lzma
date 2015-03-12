@@ -75,7 +75,7 @@ module Codec.Compression.LZMA.Internal.C
 
   -- * Indexing
   -- ** Data types
-  , Index
+  , Index(..)
   , withIndexFPtr
   , peekIndexFPtr
 

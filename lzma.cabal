@@ -105,6 +105,7 @@ test-suite test-index
   main-is: test-index.hs
   build-depends:
       base
+    , foreign-var
     , lzma
     , tasty
     , tasty-hunit
@@ -117,6 +118,7 @@ test-suite test-block
   main-is: test-block.hs
   build-depends:
       base
+    , foreign-var
     , lzma
     , tasty
     , tasty-hunit
