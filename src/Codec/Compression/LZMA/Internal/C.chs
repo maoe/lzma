@@ -875,11 +875,11 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 deriving instance Show Index
 deriving instance Storable Index
 
-finalizeIndex :: Index -> IO ()
-finalizeIndex (Index ptr) = c_finalize_index ptr
-
-foreign import ccall "lzma.h finalize_index"
-  c_finalize_index :: Ptr Index -> IO ()
+{# fun lzma_index_end as finalizeIndex
+  { `Index'
+  , passNullPtr- `Ptr ()'
+  } -> `()'
+  #}
 
 -- | Dereference a @'ForeignPtr' 'Index'@ then apply a function to the 'Index'.
 withIndexFPtr :: ForeignPtr Index -> (Index -> IO a) -> IO a
