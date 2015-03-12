@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 module Codec.Compression.LZMA.Internal.C
   ( -- * Stream
     Stream
@@ -27,9 +28,9 @@ module Codec.Compression.LZMA.Internal.C
   , streamFlagsVersion
   , streamFlagsBackwardSize
   , streamHeaderSize
-  , lzma_stream_header_decode
-  , lzma_stream_footer_decode
-  , lzma_stream_flags_compare
+  , streamHeaderDecode
+  , streamFooterDecode
+  , streamFlagsCompare
 
   -- * Block
   , Block
@@ -41,19 +42,19 @@ module Codec.Compression.LZMA.Internal.C
   , blockCheck
   , blockFilters
 
-  , lzma_block_header_size_decode
-  , lzma_block_header_size
-  , lzma_block_header_encode
-  , lzma_block_header_decode
-  , lzma_block_compressed_size
-  , lzma_block_unpadded_size
-  , lzma_block_total_size
-  , lzma_block_encoder
-  , lzma_block_decoder
-  , lzma_block_buffer_bound
-  , lzma_block_buffer_encode
-  -- , lzma_block_uncomp_encode
-  , lzma_block_buffer_decode
+  , blockHeaderSizeDecode
+  , calculateBlockHeaderSize
+  , blockHeaderEncode
+  , blockHeaderDecode
+  , blockCompressedSize
+  , blockUnpaddedSize
+  , blockTotalSize
+  , blockEncoder
+  , blockDecoder
+  , blockBufferBound
+  , blockBufferEncode
+  -- , blockUncompEncode
+  , blockBufferDecode
 
   -- * Filter
   , Filter(..)
@@ -64,44 +65,42 @@ module Codec.Compression.LZMA.Internal.C
 
   -- * Basic operations
   , Action(..)
-  , lzma_code
-  , lzma_end
+  , code
+  , end
 
   -- ** Encoders
-  , lzma_easy_encoder
+  , easyEncoder
   -- ** Decoders
-  , lzma_auto_decoder
-
+  , autoDecoder
 
   -- * Indexing
   -- ** Data types
   , Index
-  , finalizeIndex
   , withIndexFPtr
   , peekIndexFPtr
 
   -- ** Index manipulation
-  , lzma_index_memusage
-  , lzma_index_memused
-  , lzma_index_init
-  , lzma_index_end
-  , lzma_index_append
-  , lzma_index_stream_flags
-  , lzma_index_checks
-  , lzma_index_stream_padding
-  , lzma_index_stream_count
-  , lzma_index_block_count
-  , lzma_index_size
-  , lzma_index_stream_size
-  , lzma_index_total_size
-  , lzma_index_file_size
-  , lzma_index_uncompressed_size
-  , lzma_index_cat
-  , lzma_index_dup
-  , lzma_index_encoder
-  , lzma_index_decoder
-  -- , lzma_index_buffer_encode
-  -- , lzma_index_buffer_decode
+  , indexMemusage
+  , indexMemused
+  , indexInit
+  , indexEnd
+  , indexAppend
+  , indexStreamFlags
+  , indexChecks
+  , indexStreamPadding
+  , indexStreamCount
+  , indexBlockCount
+  , indexSize
+  , indexStreamSize
+  , indexTotalSize
+  , indexFileSize
+  , indexUncompressedSize
+  , indexCat
+  , indexDup
+  , indexEncoder
+  , indexDecoder
+  -- , indexBufferEncode
+  -- , indexBufferDecode
   -- ** Iterator manipulation
   , IndexIter
   , withIndexIter
@@ -124,10 +123,10 @@ module Codec.Compression.LZMA.Internal.C
   , indexIterBlockTotalSize
   , IndexIterMode(..)
 
-  , lzma_index_iter_init
-  , lzma_index_iter_rewind
-  , lzma_index_iter_next
-  , lzma_index_iter_locate
+  , indexIterInit
+  , indexIterRewind
+  , indexIterNext
+  , indexIterLocate
 
   -- * Others
   -- ** Return types
@@ -187,7 +186,7 @@ import qualified Text.Show.Pretty as Pretty
 --  * After allocating 'Stream' (on stack or heap), it must be
 --  initialized to LZMA_STREAM_INIT (see LZMA_STREAM_INIT for details).
 --  * Initialize a coder to the stream, for example by using
---  'lzma_easy_encoder' or 'lzma_auto_decoder'. Some notes:
+--  'easyEncoder' or 'autoDecoder'. Some notes:
 --
 --      * In contrast to zlib, strm->next_in and strm->next_out are ignored by
 --        all initialization functions, thus it is safe to not initialize them
@@ -195,16 +194,16 @@ import qualified Text.Show.Pretty as Pretty
 --      * The initialization functions always set strm->total_in and
 --        strm->total_out to zero.
 --      * If the initialization function fails, no memory is left allocated
---        that would require freeing with lzma_end() even if some memory was
+--        that would require freeing with end() even if some memory was
 --        associated with the lzma_stream structure when the initialization
 --        function was called.
 --
---   * Use lzma_code() to do the actual work.
+--   * Use code() to do the actual work.
 --   * Once the coding has been finished, the existing lzma_stream can be
 --     reused. It is OK to reuse 'lzma_stream' with different initialization
---     function without calling 'lzma_end' first. Old allocations are
+--     function without calling 'end' first. Old allocations are
 --     automatically freed.
---   * Finally, use 'lzma_end' to free the allocated memory. 'lzma_end' never
+--   * Finally, use 'end' to free the allocated memory. 'end' never
 --     frees the 'Stream' structure itself.
 --
 -- Application may modify the values of total_in and total_out as it wants.
@@ -252,13 +251,13 @@ streamNextOut stream = SettableVar set
     set outNext = withStream stream $ \p ->
       {# set lzma_stream.next_out #} p (castPtr outNext)
 
--- | The action argument for 'lzma_code'.
+-- | The action argument for 'code'.
 --
 -- After the first use of 'SyncFlush', 'FullFlush', or 'Finish', the same
--- 'Action' must be used until 'lzma_code' returns 'StreamEnd'. Also, the
+-- 'Action' must be used until 'code' returns 'StreamEnd'. Also, the
 -- amount of input (that is, strm->avail_in) must not be modified by the
--- application until 'lzma_code' returns 'StreamEnd'. Changing the 'Action' or
--- modifying the amount of input will make 'lzma_code' return 'ProgError'.
+-- application until 'code' returns 'StreamEnd'. Changing the 'Action' or
+-- modifying the amount of input will make 'code' return 'ProgError'.
 {# enum lzma_action as Action
   { LZMA_RUN as Run
   -- ^ Continue coding.
@@ -266,7 +265,7 @@ streamNextOut stream = SettableVar set
   -- Encoder: Encode as much input as possible. Some internal buffering will
   -- probably be done (depends on the filter chain in use), which causes
   -- latency: the input used won't usually be decodeable from the output of
-  -- the same 'lzma_code' call.
+  -- the same 'code' call.
   --
   -- Decoder: Decode as much input as possible and produce as much output as
   -- possible.
@@ -279,7 +278,7 @@ streamNextOut stream = SettableVar set
   -- stream for example for communication over network.
   --
   -- Only some filters support 'SyncFlush'. Trying to use 'SyncFlush' with
-  -- filters that don't support it will make 'lzma_code' return 'OptionsError'.
+  -- filters that don't support it will make 'code' return 'OptionsError'.
   -- For example, LZMA1 doesn't support 'SyncFlush' but LZMA2 does.
   --
   -- Using 'SyncFlush' very often can dramatically reduce the compression
@@ -292,7 +291,7 @@ streamNextOut stream = SettableVar set
   -- ^ Finish encoding of the current Block.
   --
   -- All the input data going to the current Block must have been given to the
-  -- encoder (the last bytes can still be pending in* next_in). Call 'lzma_code'
+  -- encoder (the last bytes can still be pending in* next_in). Call 'code'
   -- with 'FullFlush' until it returns 'StreamEnd'. Then continue normally
   -- with 'Run' or finish the Stream with 'Finish.
   --
@@ -303,7 +302,7 @@ streamNextOut stream = SettableVar set
   -- ^ Finish the coding operation.
   --
   -- All the input data must have been given to the encoder (the last bytes
-  -- can still be pending in next_in). Call 'lzma_code' with 'Finish' until it
+  -- can still be pending in next_in). Call 'code' with 'Finish' until it
   -- returns 'StreamEnd'. Once 'Finish' has been used, the amount of input
   -- must no longer be changed by the application.
   --
@@ -363,7 +362,7 @@ fromCheck = fromIntegral . fromEnum
 --
 -- Returns:
 --
---   * 'Ok': Initialization succeeded. Use 'lzma_code' to encode your data.
+--   * 'Ok': Initialization succeeded. Use 'code' to encode your data.
 --   * 'MemError': Memory allocation failed.
 --   * 'OptionsError': The given compression preset is not supported by this
 --      build of liblzma.
@@ -374,13 +373,13 @@ fromCheck = fromIntegral . fromEnum
 --
 -- If initialization fails (return value is not 'Ok'), all the memory
 -- allocated for *strm by liblzma is always freed. Thus, there is no need to
--- call 'lzma_end' after failed initialization.
+-- call 'end' after failed initialization.
 --
--- If initialization succeeds, use 'lzma_code' to do the actual encoding. Valid
--- values for 'Action' (the second argument of 'lzma_code') are 'Run',
+-- If initialization succeeds, use 'code' to do the actual encoding. Valid
+-- values for 'Action' (the second argument of 'code') are 'Run',
 -- 'SyncFlush', 'FullFlush', and 'Finish'. In future, there may be compression
 -- levels or flags that don't support 'SyncFlush'.
-{# fun lzma_easy_encoder
+{# fun easy_encoder as ^
   { `Stream'
   -- ^ 'Stream' that is at least initialized with LZMA_STREAM_INIT.
   , fromPreset `Preset'
@@ -409,7 +408,7 @@ fromCheck = fromIntegral . fromEnum
 --   * 'MemError': Cannot allocate memory.
 --   * 'OptionsError': Unsupported flags
 --   * 'ProgError'
-{# fun lzma_auto_decoder
+{# fun auto_decoder as ^
   { `Stream'
   -- ^ Properly prepared stream
   , `Word64'
@@ -430,7 +429,7 @@ fromCheck = fromIntegral . fromEnum
 --
 -- See the description of the coder-specific initialization function to find
 -- out what `Action' values are supported by the coder.
-{# fun lzma_code
+{# fun code as ^
   { `Stream'
   , fromAction `Action'
   } -> `Ret' toRet
@@ -438,13 +437,13 @@ fromCheck = fromIntegral . fromEnum
 
 -- | Free memory allocated for the coder data structures.
 --
--- After @'lzma_end' strm@, strm->internal is guaranteed to be @NULL@. No other
+-- After @'end' strm@, strm->internal is guaranteed to be @NULL@. No other
 -- members of the 'Stream' structure are touched.
 --
 -- Note: zlib indicates an error if application end()s unfinished stream
 -- structure. liblzma doesn't do this, and assumes that application knows
 -- what it is doing.
-{# fun lzma_end
+{# fun end as ^
   { `Stream'
   -- ^ Stream that is at least initialized with LZMA_STREAM_INIT
   } -> `()' #}
@@ -491,8 +490,8 @@ streamFlagsVersion flags = do
 -- only in the Stream Footer. There is no need to initialize backward_size when
 -- encoding Stream Header.
 --
--- 'lzma_stream_header_decode' always sets @backward_size@ to @LZMA_VLI_UNKNOWN@
--- so that it is convenient to use 'lzma_stream_flags_compare' when both Stream
+-- 'streamHeaderDecode' always sets @backward_size@ to @LZMA_VLI_UNKNOWN@
+-- so that it is convenient to use 'streamFlagsCompare' when both Stream
 -- Header and Stream Footer have been decoded.
 
 streamFlagsBackwardSize :: StreamFlags -> GettableVar VLI
@@ -510,7 +509,7 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 --
 -- @options->backward_size@ is always set to @LZMA_VLI_UNKNOWN@. This is to
 -- help comparing Stream Flags from Stream Header and Stream Footer with
--- 'lzma_stream_flags_compare'.
+-- 'streamFlagsCompare'.
 --
 -- Returns
 --
@@ -527,8 +526,8 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 -- appropriate.
 --
 -- For example, Stream decoder in liblzma uses 'DataError' if 'FormatError' is
--- returned by 'lzma_stream_header_decode' when decoding non-first Stream.
-{# fun lzma_stream_header_decode
+-- returned by 'streamHeaderDecode' when decoding non-first Stream.
+{# fun stream_header_decode as ^
   { `StreamFlags'
   -- ^ Target for the decoded Stream Header options.
   , castPtr `Ptr Word8'
@@ -551,7 +550,7 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 -- report some other error message than "file format not recognized", since
 -- the file more likely is corrupt (possibly truncated). Stream decoder in
 -- liblzma uses 'DataError' in this situation.
-{# fun lzma_stream_footer_decode
+{# fun stream_footer_decode as ^
   { `StreamFlags'
   -- ^ Target for the decoded Stream Header options.
   , castPtr `Ptr Word8'
@@ -571,7 +570,7 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 --  * 'OptionsError': version in either structure is greater than the maximum
 --    supported version (currently zero).
 --  * 'ProgError': Invalid value, e.g. invalid check or @backward_size@.
-{# fun lzma_stream_flags_compare
+{# fun stream_flags_compare as ^
   { `StreamFlags'
   , `StreamFlags'
   } -> `Ret' toRet
@@ -620,14 +619,14 @@ blockFilters block = SettableVar set
         withForeignPtr filtersFPtr $ \filtersPtr ->
           {# set lzma_block.filters #} blockPtr (castPtr filtersPtr)
 
-lzma_block_header_size_decode :: Word8 -> Word32
-lzma_block_header_size_decode =
+blockHeaderSizeDecode :: Word8 -> Word32
+blockHeaderSizeDecode =
   fromIntegral .
-  c_lzma_block_header_size_decode .
+  lzma_block_header_size_decode .
   fromIntegral
 
 foreign import capi "lzma.h lzma_block_header_size_decode"
-  c_lzma_block_header_size_decode :: CUChar -> CUInt
+  lzma_block_header_size_decode :: CUChar -> CUInt
 
 -- | Calculate Block Header Size.
 --
@@ -635,7 +634,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 -- settings specified in the 'Block' structure. Note that it is OK to
 -- increase the calculated 'blockHeaderSize' value as long as it is a multiple
 -- of four and doesn't exceed LZMA_BLOCK_HEADER_SIZE_MAX. Increasing
--- 'blockHeaderSize' just means that 'lzma_block_header_encode' will add Header
+-- 'blockHeaderSize' just means that 'blockHeaderEncode' will add Header
 -- Padding.
 --
 -- Returns
@@ -645,20 +644,20 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 --    * 'ProgError': Invalid values like compressed_size == 0.
 --
 -- Note: This doesn't check that all the options are valid i.e. this may return
--- 'Ok' even if 'lzma_block_header_encode' or 'lzma_block_encoder' would fail.
+-- 'Ok' even if 'blockHeaderEncode' or 'blockEncoder' would fail.
 -- If you want to validate the filter chain, consider using
 -- 'lzma_memlimit_encoder' which as a side-effect validates the filter chain.
-{# fun lzma_block_header_size
+{# fun block_header_size as calculateBlockHeaderSize
   { `Block'
   } -> `Ret' toRet #}
 
-{# fun lzma_block_header_encode
+{# fun block_header_encode as ^
   { `Block'
   , castPtr `Ptr Word8'
   } -> `Ret' toRet
   #}
 
-{# fun lzma_block_header_decode
+{# fun block_header_decode as ^
   { `Block'
   , passNullPtr- `Ptr ()'
   , castPtr `Ptr Word8'
@@ -690,7 +689,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 --       and lzma_check_size(block->check).
 --    * 'ProgError': Some values are invalid. For example, block->header_size
 --       must be a multiple of four and between 8 and 1024 inclusive.
-{# fun lzma_block_compressed_size
+{# fun block_compressed_size as ^
   { `Block'
   , fromIntegral `VLI'
   -- ^ Unpadded size.
@@ -698,17 +697,17 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
   #}
 
 
-{# fun lzma_block_unpadded_size
+{# fun block_unpadded_size as ^
   { `Block'
   } -> `VLI' fromIntegral
   #}
 
-{# fun lzma_block_total_size
+{# fun block_total_size as ^
   { `Block'
   } -> `VLI' fromIntegral
   #}
 
-{# fun lzma_block_encoder
+{# fun block_encoder as ^
   { `Stream'
   , `Block'
   } -> `Ret' toRet
@@ -716,28 +715,28 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 
 -- | Initialize .xz Block decoder.
 --
--- Valid actions for 'lzma_code' are 'Run' and 'Finish'. Using 'Finish' is not
+-- Valid actions for 'code' are 'Run' and 'Finish'. Using 'Finish' is not
 -- required. It is supported only for convenience.
 --
 -- Returns
 --
---    * 'Ok': All good, continue with 'lzma_code'.
+--    * 'Ok': All good, continue with 'code'.
 --    * 'UnsupportedCheck': Initialization was successful, but the given Check
 --      ID is not supported, thus Check will be ignored.
 --    * 'ProgError'
 --    * 'MemError'
-{# fun lzma_block_decoder
+{# fun block_decoder as ^
   { `Stream'
   , `Block'
   } -> `Ret' toRet
   #}
 
-{# fun lzma_block_buffer_bound
+{# fun block_buffer_bound as ^
   { fromIntegral `Word64'
   } -> `Word64' fromIntegral
   #}
 
-{# fun lzma_block_buffer_encode
+{# fun block_buffer_encode as ^
   { `Block'
   , passNullPtr- `Ptr ()'
   , castPtr `Ptr Word8'
@@ -748,7 +747,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
   } -> `Ret' toRet
   #}
 
--- {# fun lzma_block_uncomp_encode
+-- {# fun block_uncomp_encode as ^
 --   { `Block'
 --   , castPtr `Ptr Word8'
 --   , fromIntegral `Word64'
@@ -760,7 +759,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 
 -- | Single-call .xz Block decoder.
 --
--- This is single-call equivalent of 'lzma_block_decoder', and requires that
+-- This is single-call equivalent of 'blockDecoder', and requires that
 -- the caller has already decoded Block Header and checked its memory usage.
 --
 -- Returns
@@ -771,9 +770,9 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 --    * 'MemError'
 --    * 'BufError': Output buffer was too small.
 --    * 'ProgError'
-{# fun lzma_block_buffer_decode
+{# fun block_buffer_decode as ^
   { `Block'
-  -- ^ Block options just like with 'lzma_block_decoder'.
+  -- ^ Block options just like with 'blockDecoder'.
   , passNullPtr- `Ptr ()'
   -- ^ 'Allocator' for custom allocator functions. Set to 'Nothing' to use
   -- @malloc()@ and @free()@.
@@ -860,7 +859,7 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 --
 -- 'Index' often holds just one .xz Index and possibly the Stream Flags of
 -- the same Stream and size of the Stream Padding field. However, multiple
--- lzma_indexes can be concatenated with 'lzma_index_cat' and then there may be
+-- lzma_indexes can be concatenated with 'indexCat' and then there may be
 -- information about multiple Streams in the same 'Index'.
 --
 -- Notes about thread safety: Only one thread may modify 'Index' at a time.
@@ -874,12 +873,6 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 
 deriving instance Show Index
 deriving instance Storable Index
-
-{# fun lzma_index_end as finalizeIndex
-  { `Index'
-  , passNullPtr- `Ptr ()'
-  } -> `()'
-  #}
 
 -- | Dereference a @'ForeignPtr' 'Index'@ then apply a function to the 'Index'.
 withIndexFPtr :: ForeignPtr Index -> (Index -> IO a) -> IO a
@@ -1056,7 +1049,7 @@ indexIterBlockTotalSize iter = get
     get = fromIntegral <$>
       withIndexIter iter {# get lzma_index_iter.block.total_size #}
 
--- | Operation mode for 'lzma_index_iter_next'
+-- | Operation mode for 'indexIterNext'
 {# enum lzma_index_iter_mode as IndexIterMode
   { LZMA_INDEX_ITER_ANY as IndexIterAnyMode
   -- ^ Get the next Block or Stream.
@@ -1103,7 +1096,7 @@ indexIterBlockTotalSize iter = get
 -- given number of Streams and Blocks in 'Index' structure. This value may
 -- vary between CPU architectures and also between liblzma versions if the
 -- internal implementation is modified.
-{# fun lzma_index_memusage
+{# fun index_memusage as ^
   { fromIntegral `VLI' -- ^ Number of streams
   , fromIntegral `VLI' -- ^ Number of blocks
   } -> `Word64'
@@ -1115,11 +1108,11 @@ indexIterBlockTotalSize iter = get
 --
 -- @
 --   do
---     sc <- 'lzma_index_stream_count' i
---     bc <- 'lzma_index_block_count' i
---     'lzma_index_memusage' sc bc
+--     sc <- 'indexStreamCount' i
+--     bc <- 'indexBlockCount' i
+--     'indexMemusage' sc bc
 -- @
-{# fun lzma_index_memused
+{# fun index_memused as ^
   { `Index' } -> `Word32'
   #}
 
@@ -1127,14 +1120,14 @@ indexIterBlockTotalSize iter = get
 --
 -- On success, a pointer to an empty initialized 'Index' is returned.
 -- If allocation fails, NULL is returned.
-{# fun lzma_index_init { passNullPtr- `Ptr ()' } -> `Index' #}
+{# fun index_init as ^ { passNullPtr- `Ptr ()' } -> `Index' #}
 
 -- | Deallocate 'Index'.
 --
 -- Typically this function is not necessary because all the functions which
 -- allocate 'Index' in this library uses 'ForeignPtr' and therefore run the
 -- finalizer when the 'Index' is garbage collected.
-{# fun lzma_index_end
+{# fun index_end as ^
   { `Index'
   , passNullPtr- `Ptr ()'
   } -> `()'
@@ -1143,16 +1136,16 @@ indexIterBlockTotalSize iter = get
 -- | Add a new Block to 'Index'.
 --
 -- Appending a new Block does not invalidate iterators. For example, if an
--- iterator was pointing to the end of the 'Index', after 'lzma_index_append'
+-- iterator was pointing to the end of the 'Index', after 'indexAppend'
 -- it is possible to read the next Block with an existing iterator.
-{# fun lzma_index_append
+{# fun index_append as ^
   { `Index'
   -- ^ Pointer to a 'Index' structure
   , passNullPtr- `Ptr ()'
   -- ^ Pointer to lzma_allocator, or NULL to use malloc()
   , fromIntegral `VLI'
   -- ^ Unpadded Size of a Block. This can be calculated with
-  -- 'lzma_block_unpadded_size' after encoding or decoding the Block.
+  -- 'blockUnpaddedSize' after encoding or decoding the Block.
   , fromIntegral `VLI'
   -- ^ Uncompressed Size of a Block. This can be taken directly from
   -- lzma_block structure after encoding or decoding the Block.
@@ -1174,7 +1167,8 @@ indexIterBlockTotalSize iter = get
 --  * 'Ok'
 --  * 'OptionsError': Unsupported stream_flags->version.
 --  * 'ProgError'
-{# fun lzma_index_stream_flags
+
+{# fun index_stream_flags as ^
   { `Index'
   , `StreamFlags'
   } -> `Ret' toRet
@@ -1182,13 +1176,13 @@ indexIterBlockTotalSize iter = get
 
 -- | Get the types of integrity Checks.
 --
--- If 'lzma_index_stream_flags' is used to set the Stream Flags for every
--- Stream, 'lzma_index_checks' can be used to get a bitmask to indicate which
+-- If 'indexStreamFlags' is used to set the Stream Flags for every
+-- Stream, 'indexChecks' can be used to get a bitmask to indicate which
 -- Check types have been used. It can be useful e.g. if showing the Check types
 -- to the user.
 --
 -- The bitmask is 1 << check_id, e.g. CRC32 is 1 << 1 and SHA-256 is 1 << 10.
-{# fun lzma_index_checks
+{# fun index_checks as ^
   { `Index' } -> `[Check]' parseChecks
   #}
   where
@@ -1213,14 +1207,14 @@ indexIterBlockTotalSize iter = get
 -- within multiple concatenated Streams.
 --
 -- By default, the amount of Stream Padding is assumed to be zero bytes.
-{# fun lzma_index_stream_padding
+{# fun index_stream_padding as ^
   { `Index'
   , fromIntegral `VLI'
   } -> `Ret' toRet
   #}
 
 -- | Get the number of Streams.
-{# fun lzma_index_stream_count
+{# fun index_stream_count as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
@@ -1228,14 +1222,14 @@ indexIterBlockTotalSize iter = get
 --
 -- This returns the total number of Blocks in 'Index'. To get number of
 -- Blocks in individual Streams, use 'lzma_index_iter'.
-{# fun lzma_index_block_count
+{# fun index_block_count as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
 -- | Get the size of the 'Index' field as bytes.
 --
 -- This is needed to verify the Backward Size field in the Stream Footer.
-{# fun lzma_index_size
+{# fun index_size as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
@@ -1244,7 +1238,7 @@ indexIterBlockTotalSize iter = get
 -- If multiple 'Index'es have been combined, this works as if the Blocks
 -- were in a single Stream. This is useful if you are going to combine Blocks
 -- from multiple Streams into a single new Stream.
-{# fun lzma_index_stream_size
+{# fun index_stream_size as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
@@ -1252,54 +1246,54 @@ indexIterBlockTotalSize iter = get
 --
 -- This doesn't include the Stream Header, Stream Footer, Stream Padding, or
 -- Index fields.
-{# fun lzma_index_total_size
+{# fun index_total_size as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
 -- | Get the total size of the file.
 --
--- When no 'Index'es have been combined with 'lzma_index_cat' and there is
--- no Stream Padding, this function is identical to 'lzma_index_stream_size'.
+-- When no 'Index'es have been combined with 'indexCat' and there is
+-- no Stream Padding, this function is identical to 'indexStreamSize'.
 -- If multiple 'Index'es have been combined, this includes also the headers
 -- of each separate Stream and the possible Stream Padding fields.
-{# fun lzma_index_file_size
+{# fun index_file_size as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
 -- | Get the uncompressed size of the file.
-{# fun lzma_index_uncompressed_size
+{# fun index_uncompressed_size as ^
   { `Index' } -> `VLI' fromIntegral
   #}
 
 -- | Initialize an iterator.
 --
 -- This function associates the iterator with the given 'Index', and calls
--- 'lzma_index_iter_rewind' on the iterator.
+-- 'indexIterRewind' on the iterator.
 --
 -- This function doesn't allocate any memory, thus there is no
 -- 'lzma_index_iter_end'. The iterator is valid as long as the associated
--- 'Index' is valid, that is, until 'lzma_index_end' or using it as source
--- in 'lzma_index_cat'. Specifically, 'Index' doesn't become invalid if new
--- Blocks are added to it with 'lzma_index_append' or if it is used as the
--- destination in 'lzma_index_cat'.
+-- 'Index' is valid, that is, until 'indexEnd' or using it as source
+-- in 'indexCat'. Specifically, 'Index' doesn't become invalid if new
+-- Blocks are added to it with 'indexAppend' or if it is used as the
+-- destination in 'indexCat'.
 --
 -- It is safe to make copies of an initialized 'IndexIter', for example, to
 -- easily restart reading at some particular position.
-lzma_index_iter_init
+indexIterInit
   :: Index
   -- ^ 'Index' to which the iterator will be associated
   -> IO IndexIter
-lzma_index_iter_init index = do
+indexIterInit index = do
   iterFPtr <- mallocForeignPtrBytes {# sizeof lzma_index_iter #}
   withForeignPtr iterFPtr $ \iterPtr ->
-    {# call lzma_index_iter_init as c_lzma_index_iter_init #} iterPtr index
+    {# call lzma_index_iter_init #} iterPtr index
   return $ IndexIter iterFPtr
 
 -- | Rewind the iterator.
 --
--- Rewind the iterator so that next call to 'lzma_index_iter_next' will return
+-- Rewind the iterator so that next call to 'indexIterNext' will return
 -- the first Block or Stream.
-{# fun lzma_index_iter_rewind { `IndexIter' } -> `()' #}
+{# fun index_iter_rewind as ^ { `IndexIter' } -> `()' #}
 
 -- | Get the next Block or Stream.
 --
@@ -1308,9 +1302,9 @@ lzma_index_iter_init index = do
 -- is found, 'IndexIter' is not modified and this function returns 'True'. If
 -- mode is set to an unknown value, 'IndexIter' is not modified and this
 -- function returns 'True'.
-{# fun lzma_index_iter_next
+{# fun index_iter_next as ^
   { `IndexIter'
-  -- ^ Iterator initialized with 'lzma_index_iter_init'.
+  -- ^ Iterator initialized with 'indexIterInit'.
   , `IndexIterMode'
   -- ^ Specify what kind of information the caller wants to get.
   } -> `Bool'
@@ -1319,11 +1313,11 @@ lzma_index_iter_init index = do
 -- | Locate a Block.
 --
 -- If it is possible to seek in the .xz file, it is possible to parse the
--- 'Index' field(s) and use 'lzma_index_iter_locate' to do random-access
+-- 'Index' field(s) and use 'indexIterLocate' to do random-access
 -- reading with granularity of Block size.
-{# fun lzma_index_iter_locate
+{# fun index_iter_locate as ^
   { `IndexIter'
-  -- ^ Iterator that was earlier initialized with 'lzma_index_iter_init'.
+  -- ^ Iterator that was earlier initialized with 'indexIterInit'.
   , fromIntegral `VLI'
   -- ^ Uncompressed target offset which the caller would like to locate from
   -- the 'Stream'.
@@ -1335,7 +1329,7 @@ lzma_index_iter_init index = do
 -- Concatenating 'Index'es is useful when doing random-access reading in
 -- multi-'Stream' .xz file, or when combining multiple 'Stream's into single
 -- 'Stream'.
-{# fun lzma_index_cat
+{# fun index_cat as ^
   { `Index'
   -- ^ Destination index after which the source index is appended.
   , `Index'
@@ -1351,7 +1345,7 @@ lzma_index_iter_init index = do
 -- | Duplicate 'Index'.
 --
 -- Returns a copy of the 'Index', or NULL if memory allocation failed.
-{# fun lzma_index_dup
+{# fun index_dup as ^
   { `Index'
   , passNullPtr- `Ptr ()'
   } -> `Index'
@@ -1359,10 +1353,10 @@ lzma_index_iter_init index = do
 
 -- | Initialize .xz index encoder.
 --
--- The valid 'Action' values for 'lzma_code' are 'Run' and 'Finish'. It
+-- The valid 'Action' values for 'code' are 'Run' and 'Finish'. It
 -- is enough to use only one of them (you can choose freely; use 'Run' to
 -- support liblzma versions older than 5.0.0).
-{# fun lzma_index_encoder
+{# fun index_encoder as ^
   { `Stream'
   , `Index'
   } -> `Ret' toRet
@@ -1370,23 +1364,22 @@ lzma_index_iter_init index = do
 
 -- | Initialize .xz Index decoder.
 --
--- The valid 'Action' values for 'lzma_code' are 'Run' and 'Finish'. It
+-- The valid 'Action' values for 'code' are 'Run' and 'Finish'. It
 -- is enough to use only one of them (you can choose freely; use 'Run' to
 -- support liblzma versions older than 5.0.0).
-lzma_index_decoder
+indexDecoder
   :: Stream
   -- ^ Properly prepared 'Stream'
   -> Word64
   -- ^ How much memory the resulting 'Index' is allowed to require.
   -> IO (Ret, ForeignPtr Index)
-lzma_index_decoder stream (fromIntegral -> memLimit) =
+indexDecoder stream (fromIntegral -> memLimit) =
   withStream stream $ \streamPtr -> do
     -- double pointer to an index
     (indexFPtr :: ForeignPtr Index) <- mallocForeignPtr
     withForeignPtr indexFPtr $ \(indexPtr :: Ptr Index) -> do
       (toRet -> ret) <-
-        {# call lzma_index_decoder as c_lzma_index_decoder #}
-            streamPtr indexPtr memLimit
+        {# call lzma_index_decoder #} streamPtr indexPtr memLimit
       return (ret, indexFPtr)
 
 passNullPtr :: (Ptr a -> b) -> b

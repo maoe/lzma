@@ -371,7 +371,7 @@ easyEncoder
   -> Stream C.Ret
 easyEncoder preset check = do
   s <- getStream
-  liftIO $ C.lzma_easy_encoder s preset check
+  liftIO $ C.easyEncoder s preset check
 
 -- | Decode .xz Streams and .lzma files with autodetection.
 
@@ -387,7 +387,7 @@ autoDecoder
   -> Stream C.Ret
 autoDecoder memLimit flags = do
   s <- getStream
-  liftIO $ C.lzma_auto_decoder s memLimit flags
+  liftIO $ C.autoDecoder s memLimit flags
 
 -- | Encode or decode data.
 --
@@ -401,11 +401,11 @@ code action = do
   assert (not (outNext == nullPtr && outFree > 0)) $ return ()
 #endif
   s <- getStream
-  liftIO $ C.lzma_code s action
+  liftIO $ C.code s action
 
 -- | Free memory allocated for the coder data structures.
 end :: Stream ()
-end = getStream >>= liftIO . C.lzma_end
+end = getStream >>= liftIO . C.end
 
 blockDecoder :: C.IndexIter -> C.Block -> IOVector C.Filter -> Stream C.Ret
 blockDecoder iter block filters = do
@@ -422,13 +422,13 @@ blockDecoder iter block filters = do
     C.blockCheck block $= check
 
     firstByte <- peek inNext
-    C.blockHeaderSize block $= C.lzma_block_header_size_decode firstByte
+    C.blockHeaderSize block $= C.blockHeaderSizeDecode firstByte
 
   inAvail <- getInAvail
-  handleRet $ liftIO $ C.lzma_block_header_decode block inNext
+  handleRet $ liftIO $ C.blockHeaderDecode block inNext
 
   handleRet $
-    liftIO $ C.lzma_block_compressed_size block unpaddedSize
+    liftIO $ C.blockCompressedSize block unpaddedSize
 
   headerSize <- liftIO $ get $ C.blockHeaderSize block
 
@@ -436,7 +436,7 @@ blockDecoder iter block filters = do
   setInAvail $ inAvail - fromIntegral headerSize
 
   stream <- getStream
-  liftIO $ C.lzma_block_decoder stream block
+  liftIO $ C.blockDecoder stream block
   where
     handleRet m = do
       ret <- m

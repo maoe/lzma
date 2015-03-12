@@ -19,18 +19,18 @@ main = do
   file:_ <- getArgs
   (index, padding) <- withFile file ReadMode decodeIndex
   printInfoAdvanced index padding
-  C.finalizeIndex index
+  C.indexEnd index
 
 printInfoAdvanced
   :: Index
   -> C.VLI -- ^ Stream padding
   -> IO ()
 printInfoAdvanced index padding = do
-  streamCount <- C.lzma_index_stream_count index
-  blockCount <- C.lzma_index_block_count index
-  fileSize <- C.lzma_index_file_size index
-  uncompressedSize <- C.lzma_index_uncompressed_size index
-  checks <- C.lzma_index_checks index
+  streamCount <- C.indexStreamCount index
+  blockCount <- C.indexBlockCount index
+  fileSize <- C.indexFileSize index
+  uncompressedSize <- C.indexUncompressedSize index
+  checks <- C.indexChecks index
   printf "Streams:           %d\n" (fromIntegral streamCount :: Int)
   printf "Blocks:            %d\n" (fromIntegral blockCount :: Int)
   printf "Compressed size:   %d bytes\n" (fromIntegral fileSize :: Int)
@@ -43,9 +43,9 @@ printInfoAdvanced index padding = do
 
 printStreams :: Index -> IO ()
 printStreams index = do
-  iter <- C.lzma_index_iter_init index
+  iter <- C.indexIterInit index
   fix $ \loop -> do
-    notFound <- C.lzma_index_iter_next iter C.IndexIterStreamMode
+    notFound <- C.indexIterNext iter C.IndexIterStreamMode
     unless notFound $ do
       number <- get $ C.indexIterStreamNumber iter
       blockCount <- get $ C.indexIterStreamBlockCount iter
@@ -67,9 +67,9 @@ printStreams index = do
 
 printBlocks :: Index -> IO ()
 printBlocks index = do
-  iter <- C.lzma_index_iter_init index
+  iter <- C.indexIterInit index
   fix $ \loop -> do
-    notFound <- C.lzma_index_iter_next iter C.IndexIterBlockMode
+    notFound <- C.indexIterNext iter C.IndexIterBlockMode
     unless notFound $ do
       streamNumber <- get $ C.indexIterStreamNumber iter
       numberInStream <- get $ C.indexIterBlockNumberInFile iter
