@@ -3,6 +3,7 @@ import Foreign
 import Unsafe.Coerce (unsafeCoerce)
 
 import Data.Vector.Storable.Mutable (IOVector)
+import Foreign.Var
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.TH
@@ -28,9 +29,9 @@ filtersOne = do
 case_test1 :: Assertion
 case_test1 = do
   block <- newBlock
-  lzma_set_block_check block CheckNone
+  blockCheck block $= CheckNone
   do
-    ret <- lzma_block_header_size block
-    assertEqual "block_header_size 1" ret (Error ProgError)
+    ret <- calculateBlockHeaderSize block
+    assertEqual "calculateBlockHeaderSize 1" ret (Error ProgError)
 
   return ()
