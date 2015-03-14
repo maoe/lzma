@@ -13,10 +13,6 @@ module Codec.Compression.LZMA.Internal.Stream
   , newState
 
   -- ** High level API
-  , compress
-  , decompress
-
-  -- ***
   , easyEncoder
   , autoDecoder
   , code
@@ -232,27 +228,6 @@ flushBuffers = do
   setOutBuf nullFPtr
 
 ------------------------------------------------------------
-
-compress :: Stream C.Ret
-compress = do
-  undefined
-
-decompress :: C.Action -> Stream C.Ret
-decompress action = do
-  outFree <- getOutFree
-
-  assert (outFree > 0) $ return ()
-
-  result <- code action
-  outFree' <- getOutFree
-
-  let outExtra = outFree - outFree'
-
-  outAvail <- getOutAvail
-  setOutAvail $ outAvail + outExtra
-  return result
-
-------------------------------------------------------------
 -- Stream monad
 
 -- | Opaque data type to hold the underlying state in the 'Stream' monad.
@@ -386,8 +361,8 @@ autoDecoder
   -- ^ @<>@ of flags, or @mempty@ for no flags.
   -> Stream C.Ret
 autoDecoder memLimit flags = do
-  s <- getStream
-  liftIO $ C.autoDecoder s memLimit flags
+  stream <- getStream
+  liftIO $ C.autoDecoder stream memLimit flags
 
 -- | Encode or decode data.
 --
@@ -395,13 +370,22 @@ autoDecoder memLimit flags = do
 -- or decoding is done using this function.
 code :: C.Action -> Stream C.Ret
 code action = do
+  outFree <- getOutFree
+  assert (outFree > 0) $ return ()
+
 #ifdef DEBUG
   outNext <- getOutNext
-  outFree <- getOutFree
-  assert (not (outNext == nullPtr && outFree > 0)) $ return ()
+  assert (outNext /= nullPtr) $ return ()
 #endif
-  s <- getStream
-  liftIO $ C.code s action
+
+  stream <- getStream
+  ret <- liftIO $ C.code stream action
+
+  outFree' <- getOutFree
+  let outExtra = outFree - outFree'
+  outAvail <- getOutAvail
+  setOutAvail $ outAvail + outExtra
+  return ret
 
 -- | Free memory allocated for the coder data structures.
 end :: Stream ()
