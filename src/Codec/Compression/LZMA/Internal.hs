@@ -58,6 +58,7 @@ module Codec.Compression.LZMA.Internal
 
   -- * Exceptions
   , SomeLZMAException(..)
+  , CompressException(..)
   , DecompressException(..)
   , DecodeException(..)
 
