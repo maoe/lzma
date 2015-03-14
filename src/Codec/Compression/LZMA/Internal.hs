@@ -346,7 +346,10 @@ streamToLBS stream input = L.runST $ do
           go (next chunk) state chunks
     go (P.Respond outChunk next) state inChunks = do
       outChunks <- go (next ()) state inChunks
-      return $ L.Chunk outChunk outChunks
+      -- a lazy bytestring shouldn't contain empty chunks
+      return $! if S.length outChunk > 0
+        then L.Chunk outChunk outChunks
+        else outChunks
     go (P.M m) state inChunks = do
       (next, state') <- L.strictToLazyST $ Stream.runStream m state
       go next state' inChunks
