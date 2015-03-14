@@ -8,8 +8,26 @@
 {-# LANGUAGE ViewPatterns #-}
 module Codec.Compression.LZMA.Internal
   (
+  -- * Compression
+    CompressParams(..)
+  , defaultCompressParams
+  , C.Preset
+  , C.defaultPreset
+  , C.extremePreset
+  , C.customPreset
+  , C.Check(..)
+
+  -- ** Lazy 'L.ByteString's
+  , compress
+
+  -- ** Incremental processing
+  , CompressStream
+  , compressST
+  , compressIO
+  , compressStream
+
   -- * Decompression
-    DecompressParams(..)
+  , DecompressParams(..)
   , defaultDecompressParams
 
   -- ** Lazy 'L.ByteString's
@@ -82,6 +100,29 @@ import qualified Codec.Compression.LZMA.Internal.Stream as Stream
 import Debug.Trace
 #endif
 
+-- | The full set of parameters for compression. The defaults are
+-- 'defaultCompressParams'.
+data CompressParams = CompressParams
+  { compressPreset :: !C.Preset
+  -- ^
+  , compressIntegrityCheck :: !C.Check
+  -- ^
+  , compressBufferSize :: !Int
+  -- ^
+  , compressMemoryLimit :: !Word64
+  -- ^
+  }
+
+-- | The default set of parameters for compression. This is typically used with
+-- the 'compressWith' function with specific paramters opverridden.
+defaultCompressParams :: CompressParams
+defaultCompressParams = CompressParams
+  { compressPreset = C.defaultPreset
+  , compressIntegrityCheck = C.CheckCrc64
+  , compressBufferSize = defaultCompressBufferSize
+  , compressMemoryLimit = maxBound -- No limit
+  }
+
 -- | The full set of parameters for decompression. The defaults are
 -- 'defaultDecompressParams'.
 data DecompressParams = DecompressParams
@@ -104,7 +145,7 @@ data DecompressParams = DecompressParams
   -- ^
   }
 
--- | The default set of parameters for decompresssion. This is typically used
+-- | The default set of parameters for decompression. This is typically used
 -- with the 'decompressWith' function with specific parameters overridden.
 defaultDecompressParams :: DecompressParams
 defaultDecompressParams = DecompressParams
@@ -112,11 +153,100 @@ defaultDecompressParams = DecompressParams
   , decompressMemoryLimit = maxBound -- No limit
   }
 
--- defaultCompressBufferSize :: Int
--- defaultCompressBufferSize = 16 * 1024 - L.chunkOverhead
+defaultCompressBufferSize :: Int
+defaultCompressBufferSize = 16 * 1024 - L.chunkOverhead
 
 defaultDecompressBufferSize :: Int
 defaultDecompressBufferSize = 32 * 1024 - L.chunkOverhead
+
+-----------------------------------------------------------
+-- Compression
+
+-- | The unfolding of the compression process, where you provide a sequence of
+-- uncompressed data chunks as input and receive a sequence of compressed data
+-- chunks as output. The process is incremental, in that the demand for input
+-- and provision of output are interleaved.
+type CompressStream = Pipe S.ByteString S.ByteString
+
+-- |
+data CompressException = CompressError
+  Stream.ErrorCode
+  --- ^
+  String
+  --- ^
+  deriving (Eq, Show, Typeable)
+
+handleCompRet
+  :: (MonadTrans t, Monad (t m), MonadThrow m)
+  => String -- ^ Description of an error if exists
+  -> t m C.Ret
+  -> t m ()
+handleCompRet reason m = do
+  ret <- m
+  case ret of
+    C.Error code -> lift $ throwCompressError code reason
+    _ -> return ()
+
+throwCompressError
+  :: MonadThrow m
+  => C.ErrorCode
+  -> String -- ^ Description of the error
+  -> m a
+throwCompressError = (throwM .) . CompressError
+
+-- |
+instance Exception CompressException where
+  toException = Stream.lzmaExceptionToException
+  fromException = Stream.lzmaExceptionFromException
+
+compress :: CompressParams -> L.ByteString -> L.ByteString
+compress = streamToLBS . compressStream
+
+compressST :: CompressParams -> CompressStream (L.ST s) ()
+compressST = streamToST . compressStream
+
+compressIO :: CompressParams -> CompressStream IO ()
+compressIO = streamToIO . compressStream
+
+compressStream :: CompressParams -> CompressStream Stream ()
+compressStream params = do
+  handleCompRet "Failed to initialize a stream encoder" $
+    lift $ Stream.easyEncoder
+      (compressPreset params)
+      (compressIntegrityCheck params)
+  loop
+  where
+    loop = fillBuffers (compressBufferSize params) () >>= drainBuffers
+    drainBuffers isLastChunk = do
+      lift $ assertBuffers isLastChunk
+
+      res <- lift $ Stream.code $ if isLastChunk
+        then Stream.Finish
+        else Stream.Run
+
+      case res of
+        Stream.Ok -> do
+          outputBufferFull <- lift Stream.isOutputBufferFull
+          when outputBufferFull $ do
+            -- write out if the output buffer became full
+            (outFPtr, outOffset, outLen) <- lift Stream.popOutputBuffer
+            yield $ S.PS outFPtr outOffset outLen
+          loop
+        Stream.StreamEnd -> do
+          inputBufferEmpty <- lift Stream.isInputBufferEmpty
+          remaining <- if inputBufferEmpty
+            then return S.empty
+            else do
+              (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
+              return $ S.PS inFPtr inOffset inLen
+          void $ finalizeStream 0
+          yield remaining
+        Stream.Error code -> do
+          void $ finalizeStream 0
+          lift $ throwCompressError code "The stream encoder failed."
+
+-----------------------------------------------------------
+-- Decompression
 
 -- | The unfolding of the decompression process, where you provide a sequence
 -- of compressed data chunks as input and receive a sequence of uncompressed
@@ -124,12 +254,12 @@ defaultDecompressBufferSize = 32 * 1024 - L.chunkOverhead
 -- input and provision of output are interleaved.
 type DecompressStream = Pipe S.ByteString S.ByteString
 
-handleRet
+handleDecompRet
   :: (MonadTrans t, Monad (t m), MonadThrow m)
   => String -- ^ Description of an error if exists
   -> t m C.Ret
   -> t m ()
-handleRet reason m = do
+handleDecompRet reason m = do
   ret <- m
   case ret of
     C.Error code -> lift $ throwDecompressError code reason
@@ -155,25 +285,25 @@ instance Exception DecompressException where
   fromException = Stream.lzmaExceptionFromException
 
 decompress :: DecompressParams -> L.ByteString -> L.ByteString
-decompress = decompressStreamToLBS . decompressStream
+decompress = streamToLBS . decompressStream
 
 decompressST :: DecompressParams -> DecompressStream (L.ST s) ()
-decompressST = decompressStreamToST . decompressStream
+decompressST = streamToST . decompressStream
 
 decompressIO :: DecompressParams -> DecompressStream IO ()
-decompressIO = decompressStreamToIO . decompressStream
+decompressIO = streamToIO . decompressStream
 
 decompressStream :: DecompressParams -> DecompressStream Stream ()
 decompressStream params = do
-  handleRet "Failed to initialize a stream decoder" $
+  handleDecompRet "Failed to initialize a stream decoder" $
     lift $ Stream.autoDecoder (decompressMemoryLimit params) mempty
   loop
   where
-    loop = fillBuffers params () >>= drainBuffers
+    loop = fillBuffers (decompressBufferSize params) () >>= drainBuffers
     drainBuffers isLastChunk = do
       lift $ assertBuffers isLastChunk
 
-      res <- lift $ Stream.decompress $ if isLastChunk
+      res <- lift $ Stream.code $ if isLastChunk
         then Stream.Finish
         else Stream.Run
 
@@ -198,11 +328,13 @@ decompressStream params = do
           void $ finalizeStream 0
           lift $ throwDecompressError code "The stream decoder failed."
 
-------------------------------------------------------------
+-----------------------------------------------------------
 
-decompressStreamToLBS
-  :: DecompressStream Stream a -> L.ByteString -> L.ByteString
-decompressStreamToLBS stream input = L.runST $ do
+-- | Convert a (de)compression stream into a lazy 'L.ByteString' transformer.
+streamToLBS
+  :: Proxy x' S.ByteString () S.ByteString Stream a
+  -> L.ByteString -> L.ByteString
+streamToLBS stream input = L.runST $ do
   state <- L.strictToLazyST Stream.newState
   go stream state input
   where
@@ -220,10 +352,10 @@ decompressStreamToLBS stream input = L.runST $ do
       go next state' inChunks
     go (P.Pure _) _ !_inChunks = return L.Empty
 
-decompressStreamToST
+streamToST
   :: Proxy x' x y' y Stream a
   -> Proxy x' x y' y (L.ST s) a
-decompressStreamToST stream = do
+streamToST stream = do
   state <- lift $ L.strictToLazyST Stream.newState
   go stream state
   where
@@ -238,10 +370,10 @@ decompressStreamToST stream = do
       go next state'
     go (P.Pure chunk) _ = return chunk
 
-decompressStreamToIO
+streamToIO
   :: Proxy x' x y' y Stream a
   -> Proxy x' x y' y IO a
-decompressStreamToIO stream = do
+streamToIO stream = do
   state <- lift $ S.stToIO Stream.newState
   go stream state
   where
@@ -275,7 +407,7 @@ seekableDecompressIO
   -- ^ Initial request
   -> SeekableDecompressStream IO ()
 seekableDecompressIO params index =
-  decompressStreamToIO . seekableDecompressStream params index
+  streamToIO . seekableDecompressStream params index
 
 seekableDecompressStream
   :: DecompressParams
@@ -319,10 +451,10 @@ seekableDecompressStream params index req0 = do
         blockUncompPos = fromIntegral uncompressedFileOffset
       -- Check if the block number doesn't exceed the total block count.
       assert (blockNumberInStream <= blockCount) $ return ()
-      isLastChunk <- fillBuffers params (PRead blockPos)
+      isLastChunk <- fillBuffers (decompressBufferSize params) (PRead blockPos)
       block <- liftIO C.newBlock
       filters <- liftIO C.newFiltersMaxLength
-      handleRet "Failed to initialize a block decoder" $
+      handleDecompRet "Failed to initialize a block decoder" $
         lift $ Stream.blockDecoder iter block filters
 #if DEBUG
       lift $ Stream.dump "decodeBlock"
@@ -350,7 +482,7 @@ seekableDecompressStream params index req0 = do
       -> Int -- ^ Offset from the beginning of the block to the target position
       -> SeekableDecompressStream Stream (ReadRequest 'Uncompressed)
     fillBuffers' iter req skipBytes = do
-      isLastChunk <- fillBuffers params req
+      isLastChunk <- fillBuffers (decompressBufferSize params) req
       drainBuffers iter isLastChunk skipBytes
 
     drainBuffers
@@ -361,11 +493,11 @@ seekableDecompressStream params index req0 = do
     drainBuffers iter isLastChunk skipBytes = do
       lift $ assertBuffers isLastChunk
 
-      ret <- lift $ Stream.decompress $ if isLastChunk
+      ret <- lift $ Stream.code $ if isLastChunk
         then Stream.Finish
         else Stream.Run
 #if DEBUG
-      traceM $ "decompress -> " ++ show ret
+      traceM $ "code -> " ++ show ret
 #endif
       case ret of
         Stream.Ok -> do
@@ -417,8 +549,11 @@ locateBlock iter req = not <$> liftIO act
       -- the current position.
       Read -> C.indexIterNext iter C.IndexIterNonEmptyBlockMode
 
-fillBuffers :: DecompressParams -> r -> Proxy r S.ByteString y' y Stream Bool
-fillBuffers DecompressParams {..} req = do
+fillBuffers
+  :: Int -- ^ Buffer size
+  -> r -- ^ Request
+  -> Proxy r S.ByteString y' y Stream Bool
+fillBuffers bufferSize req = do
 #ifdef DEBUG
   lift $ Stream.consistencyCheck
 #endif
@@ -428,8 +563,8 @@ fillBuffers DecompressParams {..} req = do
     fillOutputBuffer = lift $ do
       outputBufferFull <- Stream.isOutputBufferFull
       when outputBufferFull $ do
-        outFPtr <- liftIO $ S.mallocByteString decompressBufferSize
-        Stream.pushOutputBuffer outFPtr 0 decompressBufferSize
+        outFPtr <- liftIO $ S.mallocByteString bufferSize
+        Stream.pushOutputBuffer outFPtr 0 bufferSize
 
     fillInputBuffer = do
       inputBufferEmpty <- lift Stream.isInputBufferEmpty
@@ -561,7 +696,7 @@ decodeIndexStream fileSize = do
       pos <- lift ID.getPosition
       when (pos > 0) $ do
         index' <- decodeIndex1
-        handleRet "Failed to concatenate indicies." $
+        handleDecompRet "Failed to concatenate indicies." $
           liftIO $ C.indexCat index index'
         loop index
 
@@ -572,7 +707,7 @@ decodeIndex1 = do
   index <- parseIndex 8192 -- FIXME: Set appropreate size
   parseStreamHeader index
   checkIntegrity index
-  handleRet "Failed to set stream padding" $
+  handleDecompRet "Failed to set stream padding" $
     liftIO $ C.indexStreamPadding index padding
   lift $ ID.modifyStreamPadding' (+ padding)
   return index
@@ -599,7 +734,7 @@ parseStreamFooter = loop 0
         else do
           lift $ ID.setPosition $ endPos - footerSize
           footer <- lift ID.getStreamFooter
-          handleRet "Failed to decode a stream footer." $
+          handleDecompRet "Failed to decode a stream footer." $
             liftIO $ withForeignPtr inFPtr $ C.streamFooterDecode footer
           version <- liftIO $ get $ C.streamFlagsVersion footer
           unless (version ==  0) $
@@ -682,7 +817,7 @@ parseStreamHeader index = do
     pos <- lift ID.getPosition
     pread pos headerSize
   header <- lift ID.getStreamHeader
-  handleRet "Failed to decode a stream header." $
+  handleDecompRet "Failed to decode a stream header." $
     liftIO $ withByteString chunk $ C.streamHeaderDecode header
 
 checkIntegrity
@@ -691,12 +826,12 @@ checkIntegrity
 checkIntegrity index = do
   header <- lift ID.getStreamHeader
   footer <- lift ID.getStreamFooter
-  handleRet "The stream header and the footer didn't agree." $
+  handleDecompRet "The stream header and the footer didn't agree." $
     liftIO $ C.streamFlagsCompare header footer
-  handleRet "Failed to set the footer to the index." $
+  handleDecompRet "Failed to set the footer to the index." $
     liftIO $ C.indexStreamFlags index footer
   padding <- lift ID.getStreamPadding
-  handleRet "Failed to set stream padding to the index." $
+  handleDecompRet "Failed to set stream padding to the index." $
     liftIO $ C.indexStreamPadding index padding
 
 indexDecodingToIO
