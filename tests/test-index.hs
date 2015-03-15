@@ -157,8 +157,9 @@ testCode index = do
   do -- decode
     (ret, indexFPtr) <- indexDecoder stream memLimit
     assertEqual "indexDecoder's return value" Ok ret
-    withForeignPtr indexFPtr $
-      assertEqual "index created by indexDecoder" nullPtr
+    withForeignPtr indexFPtr $ \indexPtr -> do
+      Index ptr <- peek indexPtr
+      assertEqual "index created by indexDecoder" nullPtr ptr
 
   return ()
 
