@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 cabal configure -fexamples --enable-tests --enable-benchmarks --enable-coverage --ghc-options="-Wall -Werror"
 cabal build -j
