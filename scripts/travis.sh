@@ -1,6 +1,11 @@
 #!/bin/bash -e
 
-cabal configure -fexamples --enable-tests --enable-benchmarks --enable-coverage --ghc-options="-Wall -Werror"
+case $CABALVER in
+  1.1*) CABAL_HPC_OPT=--enable-library-coverage ;;
+  *)    CABAL_HPC_OPT=--enable-coverage ;;
+esac
+
+cabal configure -fexamples --enable-tests --enable-benchmarks $CABAL_HPC_OPT --ghc-options="-Wall -Werror"
 cabal build -j
 cabal test --show-details=always
 cabal check
