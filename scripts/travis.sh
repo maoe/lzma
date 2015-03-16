@@ -6,7 +6,7 @@ case $CABALVER in
 esac
 
 cabal configure -fexamples --enable-tests --enable-benchmarks $CABAL_HPC_OPT --ghc-options="-Wall -Werror"
-cabal build -j
+cabal build
 cabal test --show-details=always
 cabal check
 cabal sdist
