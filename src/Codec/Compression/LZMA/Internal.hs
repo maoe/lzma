@@ -603,8 +603,11 @@ decodeIndexIO size = bracket acquire release $ uncurry $
     (decodeIndexStream (fromIntegral size))
     ID.newIndexDecoderState
   where
-    acquire = liftIO $ (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
+    acquire = liftIO $ do
+      traceIO "acquire"
+      (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
     release (header, footer) = liftIO $ do
+      traceIO "release"
       C.freeStreamFlags header
       C.freeStreamFlags footer
 
@@ -693,6 +696,7 @@ decodeIndexStream fileSize = do
 -- | Parse an index
 decodeIndex1 :: DecodeStream IndexDecoder C.Index
 decodeIndex1 = do
+  liftIO $ traceIO "decodeIndex1"
   padding <- parseStreamFooter
   index <- parseIndex 8192 -- FIXME: Set appropreate size
   parseStreamHeader index
@@ -815,8 +819,18 @@ checkIntegrity
   :: C.Index
   -> DecodeStream IndexDecoder ()
 checkIntegrity index = do
+  liftIO $ traceIO "checkIntegrity"
   header <- lift ID.getStreamHeader
   footer <- lift ID.getStreamFooter
+  liftIO $ do
+    hv <- get $ C.streamFlagsVersion header
+    hc <- get $ C.streamFlagsCheck header
+    hb <- get $ C.streamFlagsBackwardSize header
+    fv <- get $ C.streamFlagsVersion footer
+    fc <- get $ C.streamFlagsCheck footer
+    fb <- get $ C.streamFlagsBackwardSize footer
+    traceIO $ show ("header", hv, hc, hb)
+    traceIO $ show ("footer", fv, fc, fb)
   handleDecompRet "The stream header and the footer didn't agree." $
     liftIO $ C.streamFlagsCompare header footer
   handleDecompRet "Failed to set the footer to the index." $

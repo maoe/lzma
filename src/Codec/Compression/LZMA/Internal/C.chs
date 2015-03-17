@@ -457,10 +457,14 @@ deriving instance Storable StreamFlags
 deriving instance Show StreamFlags
 
 mallocStreamFlags :: IO StreamFlags
-mallocStreamFlags = StreamFlags <$> malloc
+mallocStreamFlags = do
+  traceIO "mallocStreamFlags"
+  StreamFlags <$> malloc
 
 freeStreamFlags :: StreamFlags -> IO ()
-freeStreamFlags (StreamFlags ptr) = free ptr
+freeStreamFlags (StreamFlags ptr) = do
+  traceIO "freeStreamFlags"
+  free ptr
 
 streamFlagsCheck :: StreamFlags -> GettableVar Check
 streamFlagsCheck flags = do
