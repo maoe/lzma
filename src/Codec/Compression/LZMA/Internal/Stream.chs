@@ -56,14 +56,14 @@ import Control.Exception (assert)
 import Control.Monad
 import Foreign
 import Foreign.C
-import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
+import qualified Foreign.ForeignPtr.Unsafe as Unsafe (unsafeForeignPtrToPtr)
 
 import Control.Monad.Catch
 import Control.Monad.ST
-import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Control.Monad.Trans (MonadIO(..))
 import Data.Vector.Storable.Mutable (IOVector)
 import Foreign.Var
+import qualified Control.Monad.ST.Unsafe as Unsafe (unsafeIOToST)
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
 {# import Codec.Compression.LZMA.Internal.C #} ()
@@ -157,7 +157,7 @@ pushInputBuffer inBuf inOffset inLen = do
 
   setInBuf inBuf
   setInAvail inLen
-  setInNext $ unsafeForeignPtrToPtr inBuf `plusPtr` inOffset
+  setInNext $ Unsafe.unsafeForeignPtrToPtr inBuf `plusPtr` inOffset
 
 isInputBufferEmpty :: Stream Bool
 isInputBufferEmpty = (0 ==) <$> getInAvail
@@ -170,7 +170,7 @@ remainingInputBuffer = do
 
   assert (inAvail > 0) $ return ()
 
-  return (inBuf, inNext `minusPtr` unsafeForeignPtrToPtr inBuf, inAvail)
+  return (inBuf, inNext `minusPtr` Unsafe.unsafeForeignPtrToPtr inBuf, inAvail)
 
 pushOutputBuffer
   :: ForeignPtr Word8 -- ^
@@ -186,7 +186,7 @@ pushOutputBuffer outBuf outOffset outLen = do
 
   setOutBuf outBuf
   setOutFree outLen
-  setOutNext $ unsafeForeignPtrToPtr outBuf `plusPtr` outOffset
+  setOutNext $ Unsafe.unsafeForeignPtrToPtr outBuf `plusPtr` outOffset
 
   setOutOffset outOffset
   setOutAvail 0
@@ -240,12 +240,12 @@ data State s = State
   }
 
 newState :: ST s (State s)
-newState = unsafeIOToST $ do
+newState = Unsafe.unsafeIOToST $ do
   stream <- C.newStream
   return $ State stream S.nullForeignPtr S.nullForeignPtr 0 0
 
 runStream :: Stream a -> State s -> ST s (a, State s)
-runStream (Stream m) (State {..}) = unsafeIOToST $ do
+runStream (Stream m) (State {..}) = Unsafe.unsafeIOToST $ do
   (inBuf, outBuf, outOff, outLen, a) <-
     m stateStream stateInBuf stateOutBuf stateOutOffset stateOutLength
   return (a, State stateStream inBuf outBuf outOff outLen)
@@ -471,7 +471,7 @@ consistencyCheck = do
   outAvail <- getOutAvail
   outNext <- getOutNext
 
-  let outBufPtr = unsafeForeignPtrToPtr outBuf
+  let outBufPtr = Unsafe.unsafeForeignPtrToPtr outBuf
 
   assert (outBufPtr `plusPtr` (outOffset + outAvail) == outNext) $ return ()
 
