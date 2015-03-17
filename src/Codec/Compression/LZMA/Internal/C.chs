@@ -814,7 +814,7 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
   } deriving (Show, Eq)
   #}
 
-data {-# CTYPE "lzma_filter" #-} Filter = Filter
+data Filter = Filter
   { filterId :: BCJFilter
   , filterOptions :: Ptr ()
   }
