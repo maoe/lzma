@@ -431,7 +431,6 @@ seekableDecompressStream params index req0 = do
     decodeBlock iter req = do
       lift Stream.flushBuffers
 #if DEBUG
-      liftIO $ C.dumpIndexIter iter
       traceM $ "decodeBlock " ++ show iter ++ " " ++ show req
 #endif
       blockCount <- liftIO $ get $ C.indexIterStreamBlockCount iter
