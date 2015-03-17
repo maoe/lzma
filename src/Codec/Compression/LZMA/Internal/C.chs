@@ -142,10 +142,6 @@ module Codec.Compression.LZMA.Internal.C
   -- ** Variable-length integer
   , VLI
   , vliUnknown
-
-#if DEBUG
-  , dumpIndexIter
-#endif
   ) where
 import Control.Applicative
 import Control.Monad
@@ -881,6 +877,8 @@ withIndexFPtr fptr f = withForeignPtr fptr (peek >=> f)
 -- | Pointer to an 'IndexIter'.
 {# pointer *lzma_index_iter as IndexIter foreign newtype #}
 
+deriving instance Show IndexIter
+
 peekIndexFPtr :: ForeignPtr Index -> IO Index
 peekIndexFPtr fptr = withIndexFPtr fptr return
 
@@ -1386,12 +1384,6 @@ passNullPtr :: (Ptr a -> b) -> b
 passNullPtr f = f nullPtr
 
 #if DEBUG
-instance PrettyVal IndexIter
-instance PrettyVal IndexIterStream
-instance PrettyVal IndexIterBlock
 instance PrettyVal StreamFlags where
   prettyVal = Pretty.String . show
-
-dumpIndexIter :: IndexIter -> IO ()
-dumpIndexIter iter = withForeignPtr iter peek >>= traceM . Pretty.dumpStr
 #endif
