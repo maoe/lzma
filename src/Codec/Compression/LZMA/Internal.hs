@@ -84,7 +84,6 @@ import Pipes.Safe ()
 import qualified Control.Monad.ST as S
 import qualified Control.Monad.ST.Lazy as L
 import qualified Data.ByteString as S
-import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Internal as S
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Internal as L
@@ -96,6 +95,12 @@ import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.C as C
 import qualified Codec.Compression.LZMA.Internal.IndexDecoder as ID
 import qualified Codec.Compression.LZMA.Internal.Stream as Stream
+
+#if MIN_VERSION_bytestring(0, 10, 2)
+import qualified Data.ByteString.Builder as B
+#else
+import qualified Data.ByteString.Lazy.Builder as B
+#endif
 
 #if DEBUG
 import Debug.Trace
