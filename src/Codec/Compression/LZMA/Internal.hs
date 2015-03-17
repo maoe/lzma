@@ -775,7 +775,7 @@ parseIndex bufSize = do
         pread pos inAvail
       lift $ ID.modifyPosition' (+ inAvail)
       let indexSize' = indexSize - inAvail
-      ret <- liftIO $ withByteString chunk $ \inPtr -> do
+      ret <- liftIO $ withByteString chunk $ \inPtr _len -> do
         C.streamNextIn stream $= inPtr
         C.code stream C.Run
       case ret of
@@ -808,7 +808,8 @@ parseStreamHeader index = do
     pread pos headerSize
   header <- lift ID.getStreamHeader
   handleDecompRet "Failed to decode a stream header." $
-    liftIO $ withByteString chunk $ C.streamHeaderDecode header
+    liftIO $ withByteString chunk $ \ptr _len ->
+      C.streamHeaderDecode header ptr
 
 checkIntegrity
   :: C.Index
@@ -853,7 +854,7 @@ hasMagicBytes = do
 
 -----------------------------------------------------------
 
-withByteString :: S.ByteString -> (Ptr Word8 -> IO a) -> IO a
-withByteString (S.PS fptr off _len) f =
+withByteString :: S.ByteString -> (Ptr Word8 -> Int -> IO a) -> IO a
+withByteString (S.PS fptr off len) f =
     withForeignPtr fptr $ \ptr ->
-        f (advancePtr ptr off)
+        f (advancePtr ptr off) len
