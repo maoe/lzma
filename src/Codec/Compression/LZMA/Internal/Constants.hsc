@@ -231,7 +231,12 @@ customPreset = Preset
 fromPreset :: Integral a => Preset -> a
 fromPreset = fromIntegral . fromEnum
 
-newtype Flags = Flags Word32 deriving (Eq, Enum, Bits, Show)
+newtype Flags = Flags Word32 deriving
+  ( Eq, Enum, Bits, Show
+#if !MIN_VERSION_base(4, 6, 0)
+  , Num
+#endif
+  )
 
 instance Monoid Flags where
   mempty = Flags 0
