@@ -240,13 +240,8 @@ compressStream params = do
           loop
         Stream.StreamEnd -> do
           inputBufferEmpty <- lift Stream.isInputBufferEmpty
-          remaining <- if inputBufferEmpty
-            then return S.empty
-            else do
-              (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
-              return $ S.PS inFPtr inOffset inLen
+          assert inputBufferEmpty $ return ()
           void $ finalizeStream 0
-          yield remaining
         Stream.Error code -> do
           void $ finalizeStream 0
           lift $ throwCompressError code "The stream encoder failed."
@@ -321,15 +316,8 @@ decompressStream params = do
             (outFPtr, outOffset, outLen) <- lift Stream.popOutputBuffer
             yield $ S.PS outFPtr outOffset outLen
           loop
-        Stream.StreamEnd -> do
-          inputBufferEmpty <- lift Stream.isInputBufferEmpty
-          remaining <- if inputBufferEmpty
-            then return S.empty
-            else do
-              (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
-              return $ S.PS inFPtr inOffset inLen
+        Stream.StreamEnd ->
           void $ finalizeStream 0
-          yield remaining
         Stream.Error code -> do
           void $ finalizeStream 0
           lift $ throwDecompressError code "The stream decoder failed."
@@ -527,12 +515,6 @@ seekableDecompressStream params index req0 = do
               fillBuffers' iter Read skipBytes
 
         Stream.StreamEnd -> do
-          inputBufferEmpty <- lift Stream.isInputBufferEmpty
-          leftover <- if inputBufferEmpty
-            then return S.empty
-            else do
-              (inFPtr, inOffset, inLen) <- lift Stream.remainingInputBuffer
-              return $ S.PS inFPtr inOffset inLen
           req'm <- finalizeStream skipBytes
           return $ fromMaybe Read req'm
 
