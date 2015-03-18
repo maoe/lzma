@@ -4,7 +4,11 @@ module Codec.Compression.LZMA.Incremental
   -- interface.
 
   -- * Incremental compression and decompression
-    I.DecompressStream
+    I.CompressStream
+  , I.compressIO
+  , I.compressST
+
+  , I.DecompressStream
   , I.decompressIO
   , I.decompressST
 
