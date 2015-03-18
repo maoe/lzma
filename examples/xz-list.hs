@@ -1,6 +1,4 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ViewPatterns #-}
 module Main where
 import Control.Monad
 import Data.Function (fix)
