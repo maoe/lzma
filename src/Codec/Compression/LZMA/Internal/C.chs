@@ -23,7 +23,6 @@ module Codec.Compression.LZMA.Internal.C
 
   -- * Stream header and footer
   , StreamFlags
-  , allocaStreamFlags
   , mallocStreamFlags
   , freeStreamFlags
   , streamFlagsCheck
@@ -477,9 +476,6 @@ fromCheck = fromIntegral . fromEnum
 
 deriving instance Storable StreamFlags
 deriving instance Show StreamFlags
-
-allocaStreamFlags :: (StreamFlags -> IO a) -> IO a
-allocaStreamFlags f = alloca (f . StreamFlags)
 
 mallocStreamFlags :: IO StreamFlags
 mallocStreamFlags = StreamFlags <$> malloc
