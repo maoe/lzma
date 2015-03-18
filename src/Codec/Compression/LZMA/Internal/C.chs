@@ -18,6 +18,8 @@ module Codec.Compression.LZMA.Internal.C
   , streamAvailOut
   , streamNextIn
   , streamNextOut
+  , streamTotalIn
+  , streamTotalOut
 
   -- * Stream header and footer
   , StreamFlags
@@ -246,6 +248,22 @@ streamNextOut stream = SettableVar set
   where
     set outNext = withStream stream $ \p ->
       {# set lzma_stream.next_out #} p (castPtr outNext)
+
+-- | Total number of bytes read by liblzma
+streamTotalIn :: Stream -> Var Int
+streamTotalIn stream = Var get set
+  where
+    get = fromIntegral <$> withStream stream {# get lzma_stream.total_in #}
+    set inTotal = withStream stream $ \p ->
+      {# set lzma_stream.total_in #} p (fromIntegral inTotal)
+
+-- | Total number of bytes written by liblzma
+streamTotalOut :: Stream -> Var Int
+streamTotalOut stream = Var get set
+  where
+    get = fromIntegral <$> withStream stream {# get lzma_stream.total_out #}
+    set outTotal = withStream stream $ \p ->
+      {# set lzma_stream.total_out #} p (fromIntegral outTotal)
 
 -- | The action argument for 'code'.
 --
