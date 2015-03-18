@@ -72,8 +72,7 @@ data IndexDecoderState = IndexDecoderState
 newIndexDecoderState :: IndexDecoderState
 newIndexDecoderState = IndexDecoderState 0 0
 
--- | Run the index decoder. The resulting 'VLI' is the total length of the
--- stream paddings.
+-- | Run the index decoder
 runIndexDecoder
   :: IndexDecoder a
   -> IndexDecoderState
