@@ -692,7 +692,7 @@ blockCheck block = SettableVar set
 --
 -- Written by:
 --
---     * 'lzma_block_header_decode'(): Note that this does NOT free() the old
+--     * 'blockHeaderDecode': Note that this does NOT free() the old
 --       filter options structures. All unused filters[] will have
 --       @.id == LZMA_VLI_UNKNOWN@ and .options == NULL. If decoding fails, all
 --       filters[] are guaranteed to be LZMA_VLI_UNKNOWN and NULL.
@@ -1239,7 +1239,7 @@ indexIterBlockTotalSize iter = get
   -- 'blockUnpaddedSize' after encoding or decoding the Block.
   , fromIntegral `VLI'
   -- ^ Uncompressed Size of a Block. This can be taken directly from
-  -- lzma_block structure after encoding or decoding the Block.
+  -- 'Block' structure after encoding or decoding the Block.
   } -> `Ret' toRet
   #}
 
@@ -1312,7 +1312,7 @@ indexIterBlockTotalSize iter = get
 -- | Get the number of Blocks.
 --
 -- This returns the total number of Blocks in 'Index'. To get number of
--- Blocks in individual Streams, use 'lzma_index_iter'.
+-- Blocks in individual Streams, use 'IndexIter'.
 {# fun index_block_count as ^
   { `Index' } -> `VLI' fromIntegral
   #}
@@ -1362,7 +1362,7 @@ indexIterBlockTotalSize iter = get
 -- 'indexIterRewind' on the iterator.
 --
 -- This function doesn't allocate any memory, thus there is no
--- 'lzma_index_iter_end'. The iterator is valid as long as the associated
+-- @indexIterEnd@. The iterator is valid as long as the associated
 -- 'Index' is valid, that is, until 'indexEnd' or using it as source
 -- in 'indexCat'. Specifically, 'Index' doesn't become invalid if new
 -- Blocks are added to it with 'indexAppend' or if it is used as the
