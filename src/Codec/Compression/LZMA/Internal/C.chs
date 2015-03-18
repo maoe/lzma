@@ -231,23 +231,26 @@ streamAvailIn stream = Var get set
       {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
 -- | Amount of free space in the output buffer.
-streamAvailOut :: Stream -> SettableVar Int
-streamAvailOut stream = SettableVar set
+streamAvailOut :: Stream -> Var Int
+streamAvailOut stream = Var get set
   where
+    get = fromIntegral <$> withStream stream {# get lzma_stream.avail_out #}
     set outAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
 
 -- | Pointer to the next input byte.
-streamNextIn :: Stream -> SettableVar (Ptr Word8)
-streamNextIn stream = SettableVar set
+streamNextIn :: Stream -> Var (Ptr Word8)
+streamNextIn stream = Var get set
   where
+    get = castPtr <$> withStream stream {# get lzma_stream.next_in #}
     set inNext = withStream stream $ \p ->
       {# set lzma_stream.next_in #} p (castPtr inNext)
 
 -- | Pointer to the next output position.
-streamNextOut :: Stream -> SettableVar (Ptr Word8)
-streamNextOut stream = SettableVar set
+streamNextOut :: Stream -> Var (Ptr Word8)
+streamNextOut stream = Var get set
   where
+    get = castPtr <$> withStream stream {# get lzma_stream.next_out #}
     set outNext = withStream stream $ \p ->
       {# set lzma_stream.next_out #} p (castPtr outNext)
 
