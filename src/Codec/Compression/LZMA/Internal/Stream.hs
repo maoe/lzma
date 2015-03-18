@@ -1,7 +1,5 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -55,7 +53,6 @@ import Control.Applicative
 import Control.Exception (assert)
 import Control.Monad
 import Foreign
-import Foreign.C
 import qualified Foreign.ForeignPtr.Unsafe as Unsafe (unsafeForeignPtrToPtr)
 
 import Control.Monad.Catch
@@ -66,7 +63,6 @@ import Foreign.Var
 import qualified Control.Monad.ST.Unsafe as Unsafe (unsafeIOToST)
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
-{# import Codec.Compression.LZMA.Internal.C #} ()
 import Codec.Compression.LZMA.Internal.Types
 import qualified Codec.Compression.LZMA.Internal.C as C
 
@@ -74,10 +70,6 @@ import qualified Codec.Compression.LZMA.Internal.C as C
 import Debug.Trace
 import System.IO (hPrint, hPutStrLn, stderr)
 #endif
-
-#include <lzma.h>
-
-{# context lib="lzma" prefix="lzma" #}
 
 -- | The Stream monad, which maintains pointers to the underlying stream state,
 -- the input buffer and the output buffer.
@@ -288,42 +280,47 @@ setOutAvail outLength = Stream $ \_stream inBuf outBuf outOffset _ ->
 
 ------------------------------------------------------------
 
-withStreamPtr :: (Ptr C.Stream -> IO a) -> Stream a
-withStreamPtr f = do
-  stream <- getStream
-  liftIO $ C.withStream stream f
-
 getInAvail :: Stream Int
 getInAvail = do
-  fromIntegral <$> withStreamPtr {# get lzma_stream.avail_in #}
+  stream <- getStream
+  liftIO $ get $ C.streamAvailIn stream
 
 setInAvail :: Int -> Stream ()
-setInAvail n = withStreamPtr $ \p ->
-  {# set lzma_stream.avail_in #} p (fromIntegral n)
+setInAvail n = do
+  stream <- getStream
+  liftIO $ C.streamAvailIn stream $= n
 
 getInNext :: Stream (Ptr Word8)
-getInNext = castPtr <$> withStreamPtr {# get lzma_stream.next_in #}
+getInNext = do
+  stream <- getStream
+  liftIO $ get $ C.streamNextIn stream
 
 setInNext :: Ptr Word8 -> Stream ()
-setInNext p' = withStreamPtr $ \p ->
-  {# set lzma_stream.next_in #} p (castPtr p')
+setInNext p = do
+  stream <- getStream
+  liftIO $ C.streamNextIn stream $= p
 
 getOutFree :: Stream Int
-getOutFree =
-  fromIntegral <$> withStreamPtr {# get lzma_stream.avail_out #}
+getOutFree = do
+  stream <- getStream
+  liftIO $ get $ C.streamAvailOut stream
 
 setOutFree :: Int -> Stream ()
-setOutFree n = withStreamPtr $ \p ->
-  {# set lzma_stream.avail_out #} p (fromIntegral n)
+setOutFree n = do
+  stream <- getStream
+  liftIO $ C.streamAvailOut stream $= n
 
 #if DEBUG
 getOutNext :: Stream (Ptr Word8)
-getOutNext = castPtr <$> withStreamPtr {# get lzma_stream.next_out #}
+getOutNext = do
+  stream <- getStream
+  liftIO $ get $ C.streamNextOut stream
 #endif
 
 setOutNext :: Ptr Word8 -> Stream ()
-setOutNext p' = withStreamPtr $ \p ->
-  {# set lzma_stream.next_out #} p (castPtr p')
+setOutNext p = do
+  stream <- getStream
+  liftIO $ C.streamNextOut stream $= p
 
 -- | Initialize .xz Stream encoder using a preset number.
 --
@@ -446,8 +443,10 @@ dump label = do
   outAvail <- getOutAvail
   outOffset <- getOutOffset
 
-  inTotal <- withStreamPtr {# get lzma_stream.total_in #}
-  outTotal <- withStreamPtr {# get lzma_stream.total_out #}
+  stream <- getStream
+
+  inTotal <- liftIO $ get $ C.streamTotalIn stream
+  outTotal <- liftIO $ get $ C.streamTotalOut stream
 
   liftIO $ hPutStrLn stderr $
     label ++ ": " ++
