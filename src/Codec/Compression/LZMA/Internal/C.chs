@@ -181,33 +181,32 @@ import qualified Text.Show.Pretty as Pretty
 --
 -- Typical usage:
 --
---  * After allocating 'Stream' (on stack or heap), it must be
---  initialized to LZMA_STREAM_INIT (see LZMA_STREAM_INIT for details).
+--  * Use 'newStream' to allocate a 'Stream'.
 --  * Initialize a coder to the stream, for example by using
 --  'easyEncoder' or 'autoDecoder'. Some notes:
 --
---      * In contrast to zlib, strm->next_in and strm->next_out are ignored by
+--      * In contrast to zlib, 'streamNextIn' and 'streamNextOut' are ignored by
 --        all initialization functions, thus it is safe to not initialize them
 --        yet.
---      * The initialization functions always set strm->total_in and
---        strm->total_out to zero.
+--      * The initialization functions always set 'streamTotalIn' and
+--        'streamTotalOut' to zero.
 --      * If the initialization function fails, no memory is left allocated
---        that would require freeing with end() even if some memory was
---        associated with the lzma_stream structure when the initialization
+--        that would require freeing with 'end' even if some memory was
+--        associated with the 'Stream' structure when the initialization
 --        function was called.
 --
---   * Use code() to do the actual work.
---   * Once the coding has been finished, the existing lzma_stream can be
---     reused. It is OK to reuse 'lzma_stream' with different initialization
+--   * Use 'code' to do the actual work.
+--   * Once the coding has been finished, the existing 'Stream' can be
+--     reused. It is OK to reuse 'Stream' with different initialization
 --     function without calling 'end' first. Old allocations are
 --     automatically freed.
 --   * Finally, use 'end' to free the allocated memory. 'end' never
 --     frees the 'Stream' structure itself.
 --
--- Application may modify the values of total_in and total_out as it wants.
--- They are updated by liblzma to match the amount of data read and written but
--- aren't used for anything else except as a possible return values from
--- lzma_get_progress().
+-- Application may modify the values of 'streamTotalIn' and 'streamTotalOut' as
+-- it wants. They are updated by liblzma to match the amount of data read and
+-- written but aren't used for anything else except as a possible return values
+-- from lzma_get_progress().
 {# pointer *lzma_stream as Stream
   foreign finalizer lzma_end as finalize_stream newtype #}
 
@@ -224,6 +223,7 @@ newStream = do
   addForeignPtrFinalizer finalize_stream fptr
   return $ Stream fptr
 
+-- | Number of available input bytes in the input buffer.
 streamAvailIn :: Stream -> Var Int
 streamAvailIn stream = Var get set
   where
@@ -231,18 +231,21 @@ streamAvailIn stream = Var get set
     set inAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
+-- | Amount of free space in the output buffer.
 streamAvailOut :: Stream -> SettableVar Int
 streamAvailOut stream = SettableVar set
   where
     set outAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
 
+-- | Pointer to the next input byte.
 streamNextIn :: Stream -> SettableVar (Ptr Word8)
 streamNextIn stream = SettableVar set
   where
     set inNext = withStream stream $ \p ->
       {# set lzma_stream.next_in #} p (castPtr inNext)
 
+-- | Pointer to the next output position.
 streamNextOut :: Stream -> SettableVar (Ptr Word8)
 streamNextOut stream = SettableVar set
   where
@@ -269,7 +272,7 @@ streamTotalOut stream = Var get set
 --
 -- After the first use of 'SyncFlush', 'FullFlush', or 'Finish', the same
 -- 'Action' must be used until 'code' returns 'StreamEnd'. Also, the
--- amount of input (that is, strm->avail_in) must not be modified by the
+-- amount of input (that is, 'streamAvailIn') must not be modified by the
 -- application until 'code' returns 'StreamEnd'. Changing the 'Action' or
 -- modifying the amount of input will make 'code' return 'ProgError'.
 {# enum lzma_action as Action
@@ -436,9 +439,9 @@ fromCheck = fromIntegral . fromEnum
 -- | Encode or decode data.
 --
 -- Once the 'Stream' has been successfully initialized (e.g. with
--- 'lzma_stream_encoder'), the actual encoding or decoding is done using this
--- function. The application has to update strm->next_in, strm->avail_in,
--- strm->next_out, and strm->avail_out to pass input to and get output from
+-- 'streamEncoder'), the actual encoding or decoding is done using this
+-- function. The application has to update 'streamNextIn', 'streamAvailIn',
+-- 'streamNextOut', and 'streamAvailOut' to pass input to and get output from
 -- liblzma.
 --
 -- See the description of the coder-specific initialization function to find
@@ -454,7 +457,7 @@ fromCheck = fromIntegral . fromEnum
 -- After @'end' strm@, strm->internal is guaranteed to be @NULL@. No other
 -- members of the 'Stream' structure are touched.
 --
--- Note: zlib indicates an error if application end()s unfinished stream
+-- Note: zlib indicates an error if application 'end's unfinished stream
 -- structure. liblzma doesn't do this, and assumes that application knows
 -- what it is doing.
 {# fun end as ^
@@ -501,12 +504,12 @@ streamFlagsVersion flags = do
 --
 -- Backward Size isn't actually part of the Stream Flags field, but it is
 -- convenient to include in this structure anyway. Backward Size is present
--- only in the Stream Footer. There is no need to initialize backward_size when
--- encoding Stream Header.
+-- only in the Stream Footer. There is no need to initialize
+-- 'streamFlagsBackwardSize' when encoding Stream Header.
 --
--- 'streamHeaderDecode' always sets @backward_size@ to @LZMA_VLI_UNKNOWN@
--- so that it is convenient to use 'streamFlagsCompare' when both Stream
--- Header and Stream Footer have been decoded.
+-- 'streamHeaderDecode' always sets 'streamFlagsBackwardSize' to
+-- @LZMA_VLI_UNKNOWN@ so that it is convenient to use 'streamFlagsCompare' when
+-- both Stream Header and Stream Footer have been decoded.
 
 streamFlagsBackwardSize :: StreamFlags -> GettableVar VLI
 streamFlagsBackwardSize flags =
@@ -521,7 +524,7 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 
 -- | Decode Stream Header.
 --
--- @options->backward_size@ is always set to @LZMA_VLI_UNKNOWN@. This is to
+-- 'streamFlagsBackwardSize' is always set to @LZMA_VLI_UNKNOWN@. This is to
 -- help comparing Stream Flags from Stream Header and Stream Footer with
 -- 'streamFlagsCompare'.
 --
@@ -574,16 +577,19 @@ streamHeaderSize = {# const LZMA_STREAM_HEADER_SIZE #}
 
 -- | Compare two 'StreamFlags' structures.
 --
--- @backward_size@ values are compared only if both are not @LZMA_VLI_UNKNOWN@.
+-- 'streamFlagsBackwardSize' values are compared only if both are not
+-- @LZMA_VLI_UNKNOWN@.
 --
 -- Returns
 --
---  * 'Ok': Both are equal. If either had @backward_size@ set to
---    @LZMA_VLI_UNKNOWN@, @backward_size@ values were not compared or validated.
+--  * 'Ok': Both are equal. If either had 'streamFlagsBackwardSize' set to
+--    @LZMA_VLI_UNKNOWN@, 'streamFlagsBackwardSize' values were not compared or
+--    validated.
 --  * 'DataError': The structures differ.
 --  * 'OptionsError': version in either structure is greater than the maximum
 --    supported version (currently zero).
---  * 'ProgError': Invalid value, e.g. invalid check or @backward_size@.
+--  * 'ProgError': Invalid value, e.g. invalid check or
+--    'streamFlagsBackwardSize'.
 {# fun stream_flags_compare as ^
   { `StreamFlags'
   , `StreamFlags'
@@ -601,6 +607,17 @@ newBlock = Block <$> mallocForeignPtrBytes {# sizeof lzma_block #}
 touchBlock :: Block -> IO ()
 touchBlock (Block blockFPtr) = touchForeignPtr blockFPtr
 
+-- | Block format version.
+--
+-- To prevent API and ABI breakages if new features are needed in the 'Block'
+-- field, a version number is used to indicate which fields in this structure
+-- are in use. For now, version must always be zero. With non-zero version,
+-- most 'Block' related functions will return 'OptionsError'.
+--
+-- Read by: All functions that take pointer to 'Block' as argument, including
+-- 'blockHeaderDecode'.
+--
+-- Written by: 'blockHeaderDecode'
 blockVersion :: Block -> SettableVar Word32
 blockVersion block = SettableVar set
   where
@@ -608,6 +625,24 @@ blockVersion block = SettableVar set
       withBlock block $ \blockPtr ->
         {# set lzma_block.version #} blockPtr (fromIntegral version)
 
+-- | Size of the Block Header field.
+--
+-- This is always a multiple of four.
+--
+-- Read by:
+--
+--    * 'blockHeaderEncode'
+--    * 'blockHeaderDecode'
+---   * 'blockCompressedSize'
+--    * 'blockUnpaddedSize'
+--    * 'blockTotalSize'
+--    * 'blockDecoder'
+--    * 'blockBufferDecode'
+--
+-- Written by:
+--
+--    * 'blockHeaderSize'
+--    * 'blockBufferEncode'
 blockHeaderSize :: Block -> Var Word32
 blockHeaderSize block = Var get set
   where
@@ -618,6 +653,22 @@ blockHeaderSize block = Var get set
       withBlock block $ \blockPtr ->
         {# set lzma_block.header_size #} blockPtr (fromIntegral size)
 
+-- | Type of integrity Check.
+--
+-- The Check ID is not stored into the Block Header, thus its value must be
+-- provided also when decoding.
+--
+-- Read by:
+--
+--    * 'blockHeaderEncode'
+--    * 'blockHeaderDecode'
+--    * 'blockCompressedSize'
+--    * 'blockUnpaddedSize'
+--    * 'blockTotalSize'
+--    * 'blockEncoder'
+--    * 'blockDecoder'
+--    * 'blockBufferEncode'
+--    * 'blockBufferDecode'
 blockCheck :: Block -> SettableVar Check
 blockCheck block = SettableVar set
   where
@@ -625,6 +676,30 @@ blockCheck block = SettableVar set
       withBlock block $ \blockPtr ->
         {# set lzma_block.check #} blockPtr (fromIntegral (fromEnum check))
 
+-- | Array of filters.
+--
+-- There can be 1-4 filters. The end of the array is marked with
+-- @.id = LZMA_VLI_UNKNOWN@.
+--
+-- Read by:
+--
+--     * 'blockHeaderSize'
+--     * 'blockHeaderEncode'
+--     * 'blockEncoder'
+--     * 'blockDecoder'
+--     * 'blockBufferEncode'
+--     * 'blockBufferDecode'
+--
+-- Written by:
+--
+--     * 'lzma_block_header_decode'(): Note that this does NOT free() the old
+--       filter options structures. All unused filters[] will have
+--       @.id == LZMA_VLI_UNKNOWN@ and .options == NULL. If decoding fails, all
+--       filters[] are guaranteed to be LZMA_VLI_UNKNOWN and NULL.
+--
+-- Note: Because of the array is terminated with @.id = LZMA_VLI_UNKNOWN@, the
+-- actual array must have LZMA_FILTERS_MAX + 1 members or the Block Header
+-- decoder will overflow the buffer.
 blockFilters :: Block -> SettableVar (IOVector Filter)
 blockFilters block = SettableVar set
   where
@@ -698,10 +773,10 @@ foreign import capi "lzma.h lzma_block_header_size_decode"
 --
 -- Returns
 --
---    * 'Ok': block->compressed_size was set successfully.
---    * 'DataError': unpadded_size is too small compared to block->header_size
---       and lzma_check_size(block->check).
---    * 'ProgError': Some values are invalid. For example, block->header_size
+--    * 'Ok': 'blockCompressedSize' was set successfully.
+--    * 'DataError': unpadded_size is too small compared to 'blockHeaderSize'
+--       and lzma_check_size('blockCheck').
+--    * 'ProgError': Some values are invalid. For example, 'blockHeaderSize'
 --       must be a multiple of four and between 8 and 1024 inclusive.
 {# fun block_compressed_size as ^
   { `Block'
@@ -873,7 +948,7 @@ touchFilters (VM.MVector _ fptr) = touchForeignPtr fptr
 --
 -- 'Index' often holds just one .xz Index and possibly the Stream Flags of
 -- the same Stream and size of the Stream Padding field. However, multiple
--- lzma_indexes can be concatenated with 'indexCat' and then there may be
+-- 'Index'es can be concatenated with 'indexCat' and then there may be
 -- information about multiple Streams in the same 'Index'.
 --
 -- Notes about thread safety: Only one thread may modify 'Index' at a time.
@@ -1181,7 +1256,7 @@ indexIterBlockTotalSize iter = get
 -- Returns:
 --
 --  * 'Ok'
---  * 'OptionsError': Unsupported stream_flags->version.
+--  * 'OptionsError': Unsupported 'streamFlagsVersion'.
 --  * 'ProgError'
 
 {# fun index_stream_flags as ^

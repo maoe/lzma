@@ -39,7 +39,7 @@ data Ret
   -- decoder, this indicates that all the data was successfully decoded.
   --
   -- In all cases, when 'StreamEnd' is returned, the last output bytes
-  -- should be picked from @strm->next_out@.
+  -- should be picked from @'streamNextOut'@.
   | Error ErrorCode
   deriving (Show, Eq)
 
@@ -164,7 +164,7 @@ data ErrorCode
   -- the internal state of the decoder is corrupt.
   --
   -- * Function arguments are invalid or the structures pointed by the
-  --   argument pointers are invalid e.g. if @strm->next_out@ has been set
+  --   argument pointers are invalid e.g. if @'streamNextOut'@ has been set
   --   to NULL and @strm->avail_out > 0@ when calling 'lzma_code'.
   -- * @c_*@ functions have been called in wrong order e.g. 'lzma_code' was
   --   called right after 'lzma_end'.
