@@ -223,12 +223,17 @@ compressStream params = do
   loop
   where
     loop = fillBuffers (compressBufferSize params) () >>= drainBuffers
+
     drainBuffers isLastChunk = do
       lift $ assertBuffers isLastChunk
 
       res <- lift $ Stream.code $ if isLastChunk
         then Stream.Finish
         else Stream.Run
+
+#if DEBUG
+      liftIO $ traceIO $ "code -> " ++ show res
+#endif
 
       case res of
         Stream.Ok -> do
@@ -237,7 +242,11 @@ compressStream params = do
             -- write out if the output buffer became full
             (outFPtr, outOffset, outLen) <- lift Stream.popOutputBuffer
             yield $ S.PS outFPtr outOffset outLen
-          loop
+          if isLastChunk
+            then do
+              fillOutputBuffer $ compressBufferSize params
+              drainBuffers isLastChunk
+            else loop
         Stream.StreamEnd -> do
           inputBufferEmpty <- lift Stream.isInputBufferEmpty
           assert inputBufferEmpty $ return ()
@@ -541,32 +550,39 @@ locateBlock iter req = not <$> liftIO act
 
 fillBuffers
   :: Int -- ^ Buffer size
-  -> r -- ^ Request
-  -> Proxy r S.ByteString y' y Stream Bool
+  -> req -- ^ Request
+  -> Proxy req S.ByteString y' y Stream Bool
 fillBuffers bufferSize req = do
 #ifdef DEBUG
   lift $ Stream.consistencyCheck
 #endif
-  fillOutputBuffer
-  fillInputBuffer
-  where
-    fillOutputBuffer = lift $ do
-      outputBufferFull <- Stream.isOutputBufferFull
-      when outputBufferFull $ do
-        outFPtr <- liftIO $ S.mallocByteString bufferSize
-        Stream.pushOutputBuffer outFPtr 0 bufferSize
+  fillOutputBuffer bufferSize
+  fillInputBuffer req
 
-    fillInputBuffer = do
-      inputBufferEmpty <- lift Stream.isInputBufferEmpty
-      if inputBufferEmpty
-        then do
-          chunk <- request req
-          case chunk of
-            _ | S.null chunk -> return True
-            S.PS inFPtr inOffset inLen -> do
-              lift $ Stream.pushInputBuffer inFPtr inOffset inLen
-              return False
-        else return False
+fillOutputBuffer
+  :: MonadTrans t
+  => Int -- ^ Buffer size
+  -> t Stream ()
+fillOutputBuffer bufferSize = lift $ do
+  outputBufferFull <- Stream.isOutputBufferFull
+  when outputBufferFull $ do
+    outFPtr <- liftIO $ S.mallocByteString bufferSize
+    Stream.pushOutputBuffer outFPtr 0 bufferSize
+
+fillInputBuffer
+  :: req -- ^ Request
+  -> Proxy req S.ByteString y' y Stream Bool
+fillInputBuffer req = do
+  inputBufferEmpty <- lift Stream.isInputBufferEmpty
+  if inputBufferEmpty
+    then do
+      chunk <- request req
+      case chunk of
+        _ | S.null chunk -> return True
+        S.PS inFPtr inOffset inLen -> do
+          lift $ Stream.pushInputBuffer inFPtr inOffset inLen
+          return False
+    else return False
 
 -- | Sanity checks for buffers
 assertBuffers :: Bool -> Stream ()
