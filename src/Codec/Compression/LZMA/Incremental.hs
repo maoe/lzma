@@ -3,21 +3,32 @@ module Codec.Compression.LZMA.Incremental
   -- | This module provides incremental monadic compresssion and decompression
   -- interface.
 
-  -- * Incremental compression and decompression
+  -- * Incremental compression and Decompression
+  -- ** Compression streams
     I.CompressStream
   , I.compressIO
   , I.compressST
 
+  -- ** Compression parameters
+  , I.CompressParams
+  , I.defaultCompressParams
+  , I.compressPreset
+  , I.compressIntegrityCheck
+  , I.compressBufferSize
+  , I.compressMemoryLimit
+
+  -- ** Decompression streams
   , I.DecompressStream
   , I.decompressIO
   , I.decompressST
 
-  -- * Incremental decompression with random seek
+  -- ** Decompression parameters
   , I.DecompressParams
   , I.defaultDecompressParams
   , I.decompressBufferSize
   , I.decompressMemoryLimit
 
+  -- * Incremental decompression with random seek
   , I.SeekableDecompressStream
   , I.ReadRequest(..)
   , I.Compression(..)
