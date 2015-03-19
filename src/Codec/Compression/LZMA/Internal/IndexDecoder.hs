@@ -54,13 +54,6 @@ instance MonadIO IndexDecoder where
 instance MonadThrow IndexDecoder where
   throwM = liftIO . throwM
 
-instance MonadCatch IndexDecoder where
-  catch (IndexDecoder m) handler =
-    IndexDecoder $ \header footer pos padding ->
-      m header footer pos padding
-        `catch` \e ->
-          unIndexDecoder (handler e) header footer pos padding
-
 data IndexDecoderState = IndexDecoderState
   { indexDecoderPosition :: !(Position 'Compressed)
   -- ^ Decoder's current position in the compressed file.
