@@ -145,11 +145,11 @@ module Codec.Compression.LZMA.Internal.C
   , vliUnknown
   ) where
 import Control.Applicative
+import Control.Exception (assert)
 import Control.Monad
 import Data.List (unfoldr)
 import Foreign
 import Foreign.C
-import Unsafe.Coerce (unsafeCoerce)
 
 import Data.Vector.Storable.Mutable (IOVector)
 import Foreign.Var hiding (get)
@@ -923,16 +923,19 @@ filtersMax = {# const LZMA_FILTERS_MAX #}
 newFilters :: [Filter] -> IO (IOVector Filter)
 newFilters filters = do
   fptr <- mallocForeignPtrArray0 len
-  withForeignPtr fptr $ \ptr -> do
-    mapM_ (poke ptr) filters
-    poke ptr terminal
+  withForeignPtr fptr $ \p -> do
+    p' <- foldM pokeThenAdvance p filters
+    -- set the terminal element at the end of the array
+    assert (p' `minusPtr` p == len * sizeOf (undefined :: Filter)) $ return ()
+    {# set lzma_filter.id #} p' (fromIntegral vliUnknown)
+    {# set lzma_filter.options #} p' nullPtr
   return $ VM.MVector len fptr
   where
     len = length filters
-    terminal = Filter
-      { filterId = unsafeCoerce vliUnknown
-      , filterOptions = nullPtr
-      }
+    pokeThenAdvance :: Storable a => Ptr a -> a -> IO (Ptr a)
+    pokeThenAdvance p a = do
+      poke p a
+      return $ p `advancePtr` 1
 
 newFiltersMaxLength :: IO (IOVector Filter)
 newFiltersMaxLength = VM.new (filtersMax + 1)

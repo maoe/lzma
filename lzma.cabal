@@ -52,6 +52,7 @@ library
   ghc-options: -Wall
   if flag(debug)
     cpp-options: -DDEBUG
+    ghc-options: -fno-ignore-asserts
     build-depends:
         pretty-show
   hs-source-dirs: src
