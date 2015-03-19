@@ -5,7 +5,6 @@ import qualified Data.ByteString as S
 import qualified Pipes.Internal as P
 
 import Codec.Compression.LZMA.Incremental
-import Codec.Compression.LZMA.Internal
 
 main :: IO ()
 main = do
