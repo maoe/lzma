@@ -8,22 +8,19 @@ import Foreign
 import Text.Printf (printf)
 
 import Foreign.Var
-import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.TH
 
 import Codec.Compression.LZMA.Internal.C
 
-import Debug.Trace
-
 main :: IO ()
 main = $defaultMainGenerator
 
 memLimit :: Word64
-memLimit = 2^20
+memLimit = 2^(20 :: Int)
 
-smallCount :: Integral a => a
-smallCount = 3
+-- smallCount :: Integral a => a
+-- smallCount = 3
 
 bigCount :: Integral a => a
 bigCount = 5555
@@ -66,10 +63,10 @@ createBig = do
     size <- indexUncompressedSize index
     assertEqual "index uncompressed size" uncompressedSize size
   do
-    indexSize <- indexSize index
+    indexSize' <- indexSize index
     streamSize <- indexStreamSize index
     assertEqual "stream size"
-      (totalSize + indexSize + 2 * streamHeaderSize)
+      (totalSize + indexSize' + 2 * streamHeaderSize)
       streamSize
   return index
   where
@@ -110,6 +107,7 @@ testRead index = do
   iter <- indexIterInit index
   go iter 0
   where
+    go :: IndexIter -> Int -> IO ()
     go iter j = when (j < 2) $ do
       (totalSize, uncompressedSize, count) <- next iter 0 0 streamHeaderSize 0 0
 
