@@ -18,6 +18,7 @@ module Codec.Compression.LZMA.Internal.IndexDecoder
   ) where
 import Control.Applicative
 import Control.Monad
+import Prelude
 
 import Control.Monad.Catch
 import Control.Monad.Trans

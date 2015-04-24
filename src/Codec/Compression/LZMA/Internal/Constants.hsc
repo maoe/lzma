@@ -19,6 +19,7 @@ import Data.Bits
 import Data.Monoid
 import Data.Word
 import qualified GHC.Generics as GHC
+import Prelude
 
 #if DEBUG
 import Text.Show.Pretty (PrettyVal)

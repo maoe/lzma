@@ -74,6 +74,7 @@ import Data.Typeable (Typeable)
 import Data.Word
 import Foreign hiding (void)
 import System.IO
+import Prelude
 
 import Control.Monad.Catch
 import Control.Monad.Trans
