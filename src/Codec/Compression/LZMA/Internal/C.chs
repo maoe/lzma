@@ -150,6 +150,7 @@ import Control.Monad
 import Data.List (unfoldr)
 import Foreign
 import Foreign.C
+import Prelude
 
 import Data.Vector.Storable.Mutable (IOVector)
 import Foreign.Var hiding (get)

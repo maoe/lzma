@@ -54,6 +54,7 @@ import Control.Exception (assert)
 import Control.Monad
 import Foreign
 import qualified Foreign.ForeignPtr.Unsafe as Unsafe (unsafeForeignPtrToPtr)
+import Prelude
 
 import Control.Monad.Catch
 import Control.Monad.ST
