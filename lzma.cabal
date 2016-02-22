@@ -41,7 +41,7 @@ library
     , pipes >= 4.1 && < 4.2
     , pipes-safe >= 2.2 && < 2.3
     , tagged >= 0.7 && < 0.9
-    , vector >= 0.10 && < 0.11
+    , vector >= 0.10 && < 0.12
   if impl(ghc < 7.6)
     build-depends: ghc-prim
   build-tools: c2hs >= 0.19.1
