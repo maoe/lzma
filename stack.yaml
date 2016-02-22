@@ -1,0 +1,6 @@
+flags: {}
+packages:
+- '.'
+extra-deps:
+- foreign-var-0.1
+resolver: lts-5.3
