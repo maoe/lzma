@@ -646,8 +646,11 @@ runDecodeStream h = runEffect . loop
     loop (P.M m) = lift m >>= loop
     loop (P.Pure a) = return a
 
--- | Seek to an absolute position and ask for an input with given size.
--- Note that this is inefficient when you ask for a large amount of bytes.
+-- | Seek to an absolute position and ask for an input with given size. Note:
+--
+-- * This is inefficient when you ask for a large amount of bytes.
+-- * The returned ByteString will be shorter than the requested size if the file
+--  is insufficiently large.
 pread
   :: Monad m
   => Position 'Compressed
@@ -662,8 +665,10 @@ pread pos size = do
       | nbytes <= 0 = return chunks
       | otherwise = do
         chunk <- request req
-        let chunks' = chunks <> B.byteString (S.take nbytes chunk)
-        loop (nbytes - S.length chunk) Read chunks'
+        if S.null chunk
+            then return chunks
+            else let chunks' = chunks <> B.byteString (S.take nbytes chunk)
+            in loop (nbytes - S.length chunk) Read chunks'
 
 -- | Decode things from compressed stream.
 type DecodeStream = Client (ReadRequest 'Compressed) S.ByteString
