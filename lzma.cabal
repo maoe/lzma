@@ -38,7 +38,7 @@ library
     , exceptions >= 0.6 && < 0.9
     , foreign-var == 0.1
     , mtl >= 2.2 && < 2.3
-    , pipes >= 4.1 && < 4.3
+    , pipes >= 4.1 && < 4.4
     , pipes-safe >= 2.2 && < 2.3
     , tagged >= 0.7 && < 0.9
     , vector >= 0.10 && < 0.12
