@@ -88,12 +88,12 @@ instance Functor Stream where
   fmap = liftM
 
 instance Applicative Stream where
-  pure = return
+  pure a = Stream $ \_ inBuf outBuf offset len ->
+    return (inBuf, outBuf, offset, len, a)
   (<*>) = ap
 
 instance Monad Stream where
-  return a = Stream $ \_ inBuf outBuf offset len ->
-    return (inBuf, outBuf, offset, len, a)
+  return = pure
   Stream m >>= k = Stream $ \stream inBuf outBuf outOffset outLength -> do
     (inBuf', outBuf', outOffset', outLength', a) <-
       m stream inBuf outBuf outOffset outLength

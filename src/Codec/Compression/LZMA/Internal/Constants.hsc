@@ -16,7 +16,7 @@ module Codec.Compression.LZMA.Internal.Constants
   ) where
 
 import Data.Bits
-import Data.Monoid
+import Data.Semigroup as Sem
 import Data.Word
 import qualified GHC.Generics as GHC
 import Prelude
@@ -201,9 +201,16 @@ instance Enum ErrorCode where
 -- | Compression preset
 newtype Preset = Preset Word32 deriving (Eq, Enum)
 
+instance Sem.Semigroup Preset where
+  Preset a <> Preset b = Preset $ a .|. b
+
 instance Monoid Preset where
   mempty = customPreset 0
-  Preset a `mappend` Preset b = Preset $ a .|. b
+#if !(MIN_VERSION_base(4,11,0))
+  -- this is redundant starting with base-4.11 / GHC 8.4
+  -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
+  mappend = (<>)
+#endif
 
 -- | Default compression preset.
 --
@@ -239,9 +246,16 @@ newtype Flags = Flags Word32 deriving
 #endif
   )
 
+instance Sem.Semigroup Flags where
+  Flags a <> Flags b = Flags $ a .|. b
+
 instance Monoid Flags where
   mempty = Flags 0
-  Flags a `mappend` Flags b = Flags $ a .|. b
+#if !(MIN_VERSION_base(4,11,0))
+  -- this is redundant starting with base-4.11 / GHC 8.4
+  -- if you want to avoid CPP, you can define `mappend = (<>)` unconditionally
+  mappend = (<>)
+#endif
 
 fromFlags :: Integral a => Flags -> a
 fromFlags = fromIntegral . fromEnum

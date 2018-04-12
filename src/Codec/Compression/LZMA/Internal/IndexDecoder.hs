@@ -37,12 +37,12 @@ newtype IndexDecoder a = IndexDecoder
   } deriving Functor
 
 instance Applicative IndexDecoder where
-  pure = return
+  pure a = IndexDecoder $ \_header _footer pos padding ->
+    return (pos, padding, a)
   (<*>) = ap
 
 instance Monad IndexDecoder where
-  return a = IndexDecoder $ \_header _footer pos padding ->
-    return (pos, padding, a)
+  return = pure
   IndexDecoder m >>= k = IndexDecoder $ \header footer pos padding -> do
     (pos', padding', a) <- m header footer pos padding
     unIndexDecoder (k a) header footer pos' padding'
