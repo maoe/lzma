@@ -1,7 +1,8 @@
-name: lzma
+name: lzma-maoe
 version: 0.0.0
 synopsis: Compression and decompression in the xz format using liblzma
--- description:
+description: This package is deprecated. Plese consider using
+  <https://hackage.haskell.org/package/lzma> instead.
 homepage: https://github.com/maoe/lzma
 bug-reports: https://github.com/maoe/lzma/issues
 license: BSD3
@@ -80,7 +81,7 @@ executable xz-list
       base
     , bytestring
     , foreign-var
-    , lzma
+    , lzma-maoe
     , mtl
   ghc-options: -Wall
   hs-source-dirs: examples
@@ -93,7 +94,7 @@ executable xz-seek
   build-depends:
       base
     , bytestring
-    , lzma
+    , lzma-maoe
     , mtl
     , pipes
   ghc-options: -Wall
@@ -107,7 +108,7 @@ executable xz-cat
   build-depends:
       base
     , bytestring
-    , lzma
+    , lzma-maoe
     , pipes
   ghc-options: -Wall
   hs-source-dirs: examples
@@ -133,7 +134,7 @@ test-suite test-lzma
   build-depends:
       base
     , bytestring
-    , lzma
+    , lzma-maoe
     , tasty
     , tasty-th
     , tasty-quickcheck
@@ -146,7 +147,7 @@ test-suite test-index
   build-depends:
       base
     , foreign-var
-    , lzma
+    , lzma-maoe
     , tasty
     , tasty-hunit
     , tasty-th
@@ -159,7 +160,7 @@ test-suite test-block
   build-depends:
       base
     , foreign-var
-    , lzma
+    , lzma-maoe
     , tasty
     , tasty-hunit
     , tasty-th
