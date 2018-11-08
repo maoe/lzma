@@ -7,7 +7,7 @@ import System.Environment
 import System.IO
 
 import Codec.Compression.LZMA.Incremental
-import Foreign.Var
+import Data.StateVar
 import qualified Codec.Compression.LZMA.Internal.C as C
 
 import Text.Printf

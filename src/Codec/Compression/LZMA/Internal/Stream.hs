@@ -59,8 +59,8 @@ import Prelude
 import Control.Monad.Catch
 import Control.Monad.ST
 import Control.Monad.Trans (MonadIO(..))
+import Data.StateVar
 import Data.Vector.Storable.Mutable (IOVector)
-import Foreign.Var
 import qualified Control.Monad.ST.Unsafe as Unsafe (unsafeIOToST)
 import qualified Data.ByteString.Internal as S (nullForeignPtr)
 
