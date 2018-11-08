@@ -7,7 +7,7 @@ import Data.Word
 import Foreign
 import Text.Printf (printf)
 
-import Foreign.Var
+import Data.StateVar
 import Test.Tasty.HUnit
 import Test.Tasty.TH
 

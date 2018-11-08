@@ -152,8 +152,8 @@ import Foreign
 import Foreign.C
 import Prelude
 
+import Data.StateVar hiding (get)
 import Data.Vector.Storable.Mutable (IOVector)
-import Foreign.Var hiding (get)
 import qualified Data.Vector.Storable.Mutable as VM
 
 import Codec.Compression.LZMA.Internal.Constants
@@ -224,48 +224,48 @@ newStream = do
   return $ Stream fptr
 
 -- | Number of available input bytes in the input buffer.
-streamAvailIn :: Stream -> Var Int
-streamAvailIn stream = Var get set
+streamAvailIn :: Stream -> StateVar Int
+streamAvailIn stream = StateVar get set
   where
     get = fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
     set inAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
 
 -- | Amount of free space in the output buffer.
-streamAvailOut :: Stream -> Var Int
-streamAvailOut stream = Var get set
+streamAvailOut :: Stream -> StateVar Int
+streamAvailOut stream = StateVar get set
   where
     get = fromIntegral <$> withStream stream {# get lzma_stream.avail_out #}
     set outAvail = withStream stream $ \p ->
       {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
 
 -- | Pointer to the next input byte.
-streamNextIn :: Stream -> Var (Ptr Word8)
-streamNextIn stream = Var get set
+streamNextIn :: Stream -> StateVar (Ptr Word8)
+streamNextIn stream = StateVar get set
   where
     get = castPtr <$> withStream stream {# get lzma_stream.next_in #}
     set inNext = withStream stream $ \p ->
       {# set lzma_stream.next_in #} p (castPtr inNext)
 
 -- | Pointer to the next output position.
-streamNextOut :: Stream -> Var (Ptr Word8)
-streamNextOut stream = Var get set
+streamNextOut :: Stream -> StateVar (Ptr Word8)
+streamNextOut stream = StateVar get set
   where
     get = castPtr <$> withStream stream {# get lzma_stream.next_out #}
     set outNext = withStream stream $ \p ->
       {# set lzma_stream.next_out #} p (castPtr outNext)
 
 -- | Total number of bytes read by liblzma
-streamTotalIn :: Stream -> Var Int
-streamTotalIn stream = Var get set
+streamTotalIn :: Stream -> StateVar Int
+streamTotalIn stream = StateVar get set
   where
     get = fromIntegral <$> withStream stream {# get lzma_stream.total_in #}
     set inTotal = withStream stream $ \p ->
       {# set lzma_stream.total_in #} p (fromIntegral inTotal)
 
 -- | Total number of bytes written by liblzma
-streamTotalOut :: Stream -> Var Int
-streamTotalOut stream = Var get set
+streamTotalOut :: Stream -> StateVar Int
+streamTotalOut stream = StateVar get set
   where
     get = fromIntegral <$> withStream stream {# get lzma_stream.total_out #}
     set outTotal = withStream stream $ \p ->
@@ -487,12 +487,12 @@ mallocStreamFlags = StreamFlags <$> malloc
 freeStreamFlags :: StreamFlags -> IO ()
 freeStreamFlags (StreamFlags ptr) = free ptr
 
-streamFlagsCheck :: StreamFlags -> GettableVar Check
+streamFlagsCheck :: StreamFlags -> GettableStateVar Check
 streamFlagsCheck flags = do
   n <- {# get lzma_stream_flags.check #} flags
   return $ toEnum $ fromIntegral n
 
-streamFlagsVersion :: StreamFlags -> GettableVar Word32
+streamFlagsVersion :: StreamFlags -> GettableStateVar Word32
 streamFlagsVersion flags = do
   version <- {# get lzma_stream_flags.version #} flags
   return $ fromIntegral version
@@ -511,7 +511,7 @@ streamFlagsVersion flags = do
 -- @LZMA_VLI_UNKNOWN@ so that it is convenient to use 'streamFlagsCompare' when
 -- both Stream Header and Stream Footer have been decoded.
 
-streamFlagsBackwardSize :: StreamFlags -> GettableVar VLI
+streamFlagsBackwardSize :: StreamFlags -> GettableStateVar VLI
 streamFlagsBackwardSize flags =
   fromIntegral <$> {# get lzma_stream_flags.backward_size #} flags
 
@@ -618,8 +618,8 @@ touchBlock (Block blockFPtr) = touchForeignPtr blockFPtr
 -- 'blockHeaderDecode'.
 --
 -- Written by: 'blockHeaderDecode'
-blockVersion :: Block -> SettableVar Word32
-blockVersion block = SettableVar set
+blockVersion :: Block -> SettableStateVar Word32
+blockVersion block = SettableStateVar set
   where
     set version =
       withBlock block $ \blockPtr ->
@@ -643,8 +643,8 @@ blockVersion block = SettableVar set
 --
 --    * 'blockHeaderSize'
 --    * 'blockBufferEncode'
-blockHeaderSize :: Block -> Var Word32
-blockHeaderSize block = Var get set
+blockHeaderSize :: Block -> StateVar Word32
+blockHeaderSize block = StateVar get set
   where
     get =
       withBlock block $ \blockPtr ->
@@ -669,8 +669,8 @@ blockHeaderSize block = Var get set
 --    * 'blockDecoder'
 --    * 'blockBufferEncode'
 --    * 'blockBufferDecode'
-blockCheck :: Block -> SettableVar Check
-blockCheck block = SettableVar set
+blockCheck :: Block -> SettableStateVar Check
+blockCheck block = SettableStateVar set
   where
     set check =
       withBlock block $ \blockPtr ->
@@ -700,8 +700,8 @@ blockCheck block = SettableVar set
 -- Note: Because of the array is terminated with @.id = LZMA_VLI_UNKNOWN@, the
 -- actual array must have LZMA_FILTERS_MAX + 1 members or the Block Header
 -- decoder will overflow the buffer.
-blockFilters :: Block -> SettableVar (IOVector Filter)
-blockFilters block = SettableVar set
+blockFilters :: Block -> SettableStateVar (IOVector Filter)
+blockFilters block = SettableStateVar set
   where
     set (VM.MVector _ filtersFPtr) =
       withBlock block $ \blockPtr ->
@@ -978,7 +978,7 @@ deriving instance Show IndexIter
 peekIndexFPtr :: ForeignPtr Index -> IO Index
 peekIndexFPtr fptr = withIndexFPtr fptr return
 
-indexIterStreamFlags :: IndexIter -> GettableVar StreamFlags
+indexIterStreamFlags :: IndexIter -> GettableStateVar StreamFlags
 indexIterStreamFlags iter = get
   where
     get = withIndexIter iter {# get lzma_index_iter.stream.flags #}
@@ -986,7 +986,7 @@ indexIterStreamFlags iter = get
 -- | Stream number in the 'Index'.
 --
 -- The first Stream is 1.
-indexIterStreamNumber :: IndexIter -> GettableVar VLI
+indexIterStreamNumber :: IndexIter -> GettableStateVar VLI
 indexIterStreamNumber iter = get
   where
     get = fromIntegral <$>
@@ -995,7 +995,7 @@ indexIterStreamNumber iter = get
 -- | Number of Blocks in the Stream.
 --
 -- If this is zero, the block structure below has undefined values.
-indexIterStreamBlockCount :: IndexIter -> GettableVar VLI
+indexIterStreamBlockCount :: IndexIter -> GettableStateVar VLI
 indexIterStreamBlockCount iter = get
   where
     get = fromIntegral <$>
@@ -1005,7 +1005,7 @@ indexIterStreamBlockCount iter = get
 --
 -- The offset is relative to the beginning of the 'Index' (i.e. usually the
 -- beginning of the .xz file).
-indexIterStreamCompressedOffset :: IndexIter -> GettableVar VLI
+indexIterStreamCompressedOffset :: IndexIter -> GettableStateVar VLI
 indexIterStreamCompressedOffset iter = get
   where
     get = fromIntegral <$>
@@ -1015,7 +1015,7 @@ indexIterStreamCompressedOffset iter = get
 --
 -- The offset is relative to the beginning of the 'Index' (i.e. usually the
 -- beginning of the .xz file).
-indexIterStreamUncompressedOffset :: IndexIter -> GettableVar VLI
+indexIterStreamUncompressedOffset :: IndexIter -> GettableStateVar VLI
 indexIterStreamUncompressedOffset iter = get
   where
     get = fromIntegral <$>
@@ -1025,21 +1025,21 @@ indexIterStreamUncompressedOffset iter = get
 --
 -- This includes all headers except the possible Stream Padding after this
 -- Stream.
-indexIterStreamCompressedSize :: IndexIter -> GettableVar VLI
+indexIterStreamCompressedSize :: IndexIter -> GettableStateVar VLI
 indexIterStreamCompressedSize iter = get
   where
     get = fromIntegral <$>
       withIndexIter iter {# get lzma_index_iter.stream.compressed_size #}
 
 -- | Uncompressed size of this Stream.
-indexIterStreamUncompressedSize :: IndexIter -> GettableVar VLI
+indexIterStreamUncompressedSize :: IndexIter -> GettableStateVar VLI
 indexIterStreamUncompressedSize iter = get
   where
     get = fromIntegral <$>
       withIndexIter iter {# get lzma_index_iter.stream.uncompressed_size #}
 
 -- | Size of Stream Padding after this Stream.
-indexIterStreamPadding :: IndexIter -> GettableVar VLI
+indexIterStreamPadding :: IndexIter -> GettableStateVar VLI
 indexIterStreamPadding iter = get
   where
     get = fromIntegral <$>
@@ -1048,7 +1048,7 @@ indexIterStreamPadding iter = get
 -- | Block number in the file.
 --
 -- The first Block is 1.
-indexIterBlockNumberInFile :: IndexIter -> GettableVar VLI
+indexIterBlockNumberInFile :: IndexIter -> GettableStateVar VLI
 indexIterBlockNumberInFile iter = get
   where
     get = fromIntegral <$>
@@ -1059,7 +1059,7 @@ indexIterBlockNumberInFile iter = get
 -- This offset is relative to the beginning of the 'Index' (i.e. usually the
 -- beginning of the .xz file). Normally this is where you should seek in the
 -- .xz file to start decompressing this Block.
-indexIterBlockCompressedFileOffset :: IndexIter -> GettableVar VLI
+indexIterBlockCompressedFileOffset :: IndexIter -> GettableStateVar VLI
 indexIterBlockCompressedFileOffset iter = get
   where
     get = fromIntegral <$>
@@ -1075,7 +1075,7 @@ indexIterBlockCompressedFileOffset iter = get
 -- against 'indexIterBlockUncompressedFileOffset' or
 -- 'indexIterBlockUncompressedStreamOffset', and possibly decode and throw
 -- away some amount of data before reaching the target offset.
-indexIterBlockUncompressedFileOffset :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedFileOffset :: IndexIter -> GettableStateVar VLI
 indexIterBlockUncompressedFileOffset iter = get
   where
     get = fromIntegral <$>
@@ -1085,7 +1085,7 @@ indexIterBlockUncompressedFileOffset iter = get
 -- | Block number in this Stream.
 --
 -- The first Block is 1.
-indexIterBlockNumberInStream :: IndexIter -> GettableVar VLI
+indexIterBlockNumberInStream :: IndexIter -> GettableStateVar VLI
 indexIterBlockNumberInStream iter = get
   where
     get = fromIntegral <$>
@@ -1095,7 +1095,7 @@ indexIterBlockNumberInStream iter = get
 --
 -- This offset is relative to the beginning of the Stream containing this
 -- Block.
-indexIterBlockCompressedStreamOffset :: IndexIter -> GettableVar VLI
+indexIterBlockCompressedStreamOffset :: IndexIter -> GettableStateVar VLI
 indexIterBlockCompressedStreamOffset iter = get
   where
     get = fromIntegral <$>
@@ -1106,7 +1106,7 @@ indexIterBlockCompressedStreamOffset iter = get
 --
 -- This offset is relative to the beginning of the Stream containing this
 -- Block.
-indexIterBlockUncompressedStreamOffset :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedStreamOffset :: IndexIter -> GettableStateVar VLI
 indexIterBlockUncompressedStreamOffset iter = get
   where
     get = fromIntegral <$>
@@ -1117,7 +1117,7 @@ indexIterBlockUncompressedStreamOffset iter = get
 --
 -- You should pass this to the Block decoder if you will decode this Block.
 -- It will allow the Block decoder to validate the uncompressed size.
-indexIterBlockUncompressedSize :: IndexIter -> GettableVar VLI
+indexIterBlockUncompressedSize :: IndexIter -> GettableStateVar VLI
 indexIterBlockUncompressedSize iter = get
   where
     get = fromIntegral <$>
@@ -1127,7 +1127,7 @@ indexIterBlockUncompressedSize iter = get
 --
 -- You should pass this to the Block decoder if you will decode this Block.
 -- It will allow the Block decoder to validate the unpadded size.
-indexIterBlockUnpaddedSize :: IndexIter -> GettableVar VLI
+indexIterBlockUnpaddedSize :: IndexIter -> GettableStateVar VLI
 indexIterBlockUnpaddedSize iter = get
   where
     get = fromIntegral <$>
@@ -1137,7 +1137,7 @@ indexIterBlockUnpaddedSize iter = get
 --
 -- This includes all headers and padding in this Block. This is useful if you
 -- need to know how many bytes the Block decoder will actually read.
-indexIterBlockTotalSize :: IndexIter -> GettableVar VLI
+indexIterBlockTotalSize :: IndexIter -> GettableStateVar VLI
 indexIterBlockTotalSize iter = get
   where
     get = fromIntegral <$>

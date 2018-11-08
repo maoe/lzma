@@ -2,8 +2,8 @@
 import Foreign
 import Unsafe.Coerce (unsafeCoerce)
 
+import Data.StateVar
 import Data.Vector.Storable.Mutable (IOVector)
-import Foreign.Var
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.TH

@@ -1,6 +1,1 @@
 packages: .
-
-source-repository-package
-  type: git
-  location: https://github.com/maoe/foreign-var.git
-  tag: cdb0941985f8d4a120103fa8333e69e21f733237
