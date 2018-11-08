@@ -78,7 +78,7 @@ import Prelude
 
 import Control.Monad.Catch
 import Control.Monad.Trans
-import Foreign.Var
+import Data.StateVar
 import Pipes hiding (next, void)
 import Pipes.Core
 import Pipes.Safe ()
