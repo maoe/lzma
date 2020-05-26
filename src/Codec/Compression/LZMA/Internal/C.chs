@@ -10,8 +10,8 @@
 module Codec.Compression.LZMA.Internal.C
   ( -- * Stream
     Stream
-  , withStream
   , newStream
+  , freeStream
 
   -- ** Getters and settters
   , streamAvailIn
@@ -207,69 +207,67 @@ import qualified Text.Show.Pretty as Pretty
 -- it wants. They are updated by liblzma to match the amount of data read and
 -- written but aren't used for anything else except as a possible return values
 -- from lzma_get_progress().
-{# pointer *lzma_stream as Stream
-  foreign finalizer lzma_end as finalize_stream newtype #}
+{# pointer *lzma_stream as Stream newtype #}
 
 deriving instance Show Stream
 
-foreign import ccall "lzma.h initialize_stream"
-  initialize_stream :: Ptr Stream -> IO ()
+foreign import ccall "lzma.h lzma_init"
+  c_lzma_init :: Ptr Stream -> IO ()
+
+foreign import ccall "lzma.h lzma_end"
+  c_lzma_end :: Ptr Stream -> IO ()
 
 -- | Allocate a new stream.
 newStream :: IO Stream
 newStream = do
-  fptr <- mallocForeignPtrBytes {# sizeof lzma_stream #}
-  withForeignPtr fptr initialize_stream
-  addForeignPtrFinalizer finalize_stream fptr
-  return $ Stream fptr
+  p <- mallocBytes {# sizeof lzma_stream #}
+  c_lzma_init p
+  return $ Stream p
+
+freeStream :: Stream -> IO ()
+freeStream (Stream p) = c_lzma_end p
 
 -- | Number of available input bytes in the input buffer.
 streamAvailIn :: Stream -> StateVar Int
 streamAvailIn stream = StateVar get set
   where
-    get = fromIntegral <$> withStream stream {# get lzma_stream.avail_in #}
-    set inAvail = withStream stream $ \p ->
-      {# set lzma_stream.avail_in #} p (fromIntegral inAvail)
+    get = fromIntegral <$> {# get lzma_stream.avail_in #} stream
+    set = {# set lzma_stream.avail_in #} stream . fromIntegral
 
 -- | Amount of free space in the output buffer.
 streamAvailOut :: Stream -> StateVar Int
 streamAvailOut stream = StateVar get set
   where
-    get = fromIntegral <$> withStream stream {# get lzma_stream.avail_out #}
-    set outAvail = withStream stream $ \p ->
-      {# set lzma_stream.avail_out #} p (fromIntegral outAvail)
+    get = fromIntegral <$> {# get lzma_stream.avail_out #} stream
+    set = {# set lzma_stream.avail_out #} stream . fromIntegral
 
 -- | Pointer to the next input byte.
 streamNextIn :: Stream -> StateVar (Ptr Word8)
 streamNextIn stream = StateVar get set
   where
-    get = castPtr <$> withStream stream {# get lzma_stream.next_in #}
-    set inNext = withStream stream $ \p ->
-      {# set lzma_stream.next_in #} p (castPtr inNext)
+    get = castPtr <$> {# get lzma_stream.next_in #} stream
+    set = {# set lzma_stream.next_in #} stream . castPtr
 
 -- | Pointer to the next output position.
 streamNextOut :: Stream -> StateVar (Ptr Word8)
 streamNextOut stream = StateVar get set
   where
-    get = castPtr <$> withStream stream {# get lzma_stream.next_out #}
-    set outNext = withStream stream $ \p ->
-      {# set lzma_stream.next_out #} p (castPtr outNext)
+    get = castPtr <$> {# get lzma_stream.next_out #} stream
+    set = {# set lzma_stream.next_out #} stream . castPtr
 
 -- | Total number of bytes read by liblzma
 streamTotalIn :: Stream -> StateVar Int
 streamTotalIn stream = StateVar get set
   where
-    get = fromIntegral <$> withStream stream {# get lzma_stream.total_in #}
-    set inTotal = withStream stream $ \p ->
-      {# set lzma_stream.total_in #} p (fromIntegral inTotal)
+    get = fromIntegral <$> {# get lzma_stream.total_in #} stream
+    set = {# set lzma_stream.total_in #} stream . fromIntegral
 
 -- | Total number of bytes written by liblzma
 streamTotalOut :: Stream -> StateVar Int
 streamTotalOut stream = StateVar get set
   where
-    get = fromIntegral <$> withStream stream {# get lzma_stream.total_out #}
-    set outTotal = withStream stream $ \p ->
-      {# set lzma_stream.total_out #} p (fromIntegral outTotal)
+    get = fromIntegral <$> {# get lzma_stream.total_out #} stream
+    set = {# set lzma_stream.total_out #} stream . fromIntegral
 
 -- | The action argument for 'code'.
 --
@@ -1467,14 +1465,13 @@ indexDecoder
   -> Word64
   -- ^ How much memory the resulting 'Index' is allowed to require.
   -> IO (Ret, ForeignPtr Index)
-indexDecoder stream (fromIntegral -> memLimit) =
-  withStream stream $ \streamPtr -> do
-    -- double pointer to an index
-    (indexFPtr :: ForeignPtr Index) <- mallocForeignPtr
-    withForeignPtr indexFPtr $ \(indexPtr :: Ptr Index) -> do
-      (toRet -> ret) <-
-        {# call lzma_index_decoder #} streamPtr indexPtr memLimit
-      return (ret, indexFPtr)
+indexDecoder stream (fromIntegral -> memLimit) = do
+  -- double pointer to an index
+  (indexFPtr :: ForeignPtr Index) <- mallocForeignPtr
+  withForeignPtr indexFPtr $ \(indexPtr :: Ptr Index) -> do
+    (toRet -> ret) <-
+      {# call lzma_index_decoder #} stream indexPtr memLimit
+    return (ret, indexFPtr)
 
 passNullPtr :: (Ptr a -> b) -> b
 passNullPtr f = f nullPtr

@@ -615,15 +615,21 @@ decodeIndex h = do
   runDecodeStream h $ decodeIndexIO (fromIntegral size)
 
 decodeIndexIO :: Size -> DecodeStream IO (C.Index, C.VLI)
-decodeIndexIO size = bracket acquire release $ uncurry $
+decodeIndexIO size = bracket acquire release $ \(stream, header, footer) ->
   indexDecodingToIO
-    (decodeIndexStream (fromIntegral size))
+    (decodeIndexStream stream (fromIntegral size))
     ID.newIndexDecoderState
+    header
+    footer
   where
-    acquire = liftIO $ (,) <$> C.mallocStreamFlags <*> C.mallocStreamFlags
-    release (header, footer) = liftIO $ do
-      C.freeStreamFlags header
+    acquire = liftIO $ (,,)
+      <$> C.newStream
+      <*> C.mallocStreamFlags
+      <*> C.mallocStreamFlags
+    release (stream, header, footer) = liftIO $ do
       C.freeStreamFlags footer
+      C.freeStreamFlags header
+      C.freeStream stream
 
 runDecodeStream
   :: (MonadIO m, MonadThrow m)
@@ -694,11 +700,12 @@ footerSize = headerSize
 -- | Seek thorough a seekable stream and build a combined index. The index can
 -- later be used for seeking.
 decodeIndexStream
-  :: Size -- ^ Size of the file
+  :: C.Stream
+  -> Size -- ^ File size
   -> DecodeStream IndexDecoder (C.Index, C.VLI)
-decodeIndexStream fileSize = do
+decodeIndexStream stream fileSize = do
   lift $ ID.setPosition $ fromIntegral fileSize
-  index <- decodeIndex1
+  index <- decodeIndex1 stream
   loop index
   padding <- lift ID.getStreamPadding
   return (index, padding)
@@ -706,17 +713,19 @@ decodeIndexStream fileSize = do
     loop :: C.Index -> DecodeStream IndexDecoder ()
     loop index = do
       pos <- lift ID.getPosition
-      when (pos > 0) $ do
-        index' <- decodeIndex1
-        handleDecompRet "Failed to concatenate indicies." $
-          liftIO $ C.indexCat index index'
-        loop index
+      if pos <= 0
+        then return ()
+        else do
+          index' <- decodeIndex1 stream
+          handleDecompRet "Failed to concatenate indicies." $
+            liftIO $ C.indexCat index index'
+          loop index
 
 -- | Parse an index
-decodeIndex1 :: DecodeStream IndexDecoder C.Index
-decodeIndex1 = do
+decodeIndex1 :: C.Stream -> DecodeStream IndexDecoder C.Index
+decodeIndex1 stream = do
   padding <- parseStreamFooter
-  index <- parseIndex 8192 -- FIXME: Set appropreate size
+  index <- parseIndex stream 8192 -- FIXME: Set appropreate size
   parseStreamHeader index
   checkIntegrity index
   handleDecompRet "Failed to set stream padding" $
@@ -773,22 +782,22 @@ getIndexSize = do
 
 -- | Decode a stream index.
 parseIndex
-  :: C.VLI -- ^ Buffer size
+  :: C.Stream
+  -> C.VLI -- ^ Buffer size
   -> DecodeStream IndexDecoder C.Index
-parseIndex bufSize = do
+parseIndex stream bufSize = do
   indexSize <- lift getIndexSize
   -- Set posision to the beginning of the index.
   lift $ ID.modifyPosition' $ subtract $ fromIntegral indexSize
-  stream <- liftIO C.newStream
   (ret, indexFPtr) <- liftIO $ C.indexDecoder stream maxBound -- FIXME: Set proper value
   unless (ret == C.Ok) $ lift $ throwM $ DecodeError C.ProgError
     "Failed to initialize an index decoder."
 
-  loop stream indexSize
+  loop indexSize
 
   liftIO $ C.peekIndexFPtr indexFPtr
   where
-    loop stream indexSize = do
+    loop indexSize = do
       let inAvail :: Integral a => a
           inAvail = fromIntegral $ min bufSize indexSize
       liftIO $ C.streamAvailIn stream $=! inAvail
@@ -801,7 +810,7 @@ parseIndex bufSize = do
         C.streamNextIn stream $= inPtr
         C.code stream C.Run
       case ret of
-        C.Ok -> loop stream indexSize'
+        C.Ok -> loop indexSize'
         C.Error C.BufError ->
           lift $ throwM $ DecodeError C.DataError $
             "The index decoder has liked more input than what the index " ++
