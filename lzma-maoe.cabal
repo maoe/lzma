@@ -14,11 +14,11 @@ category: Codec
 build-type: Simple
 cabal-version: >=1.10
 tested-with:
-  GHC == 7.10.3
-  GHC == 8.0.2
   GHC == 8.2.2
   GHC == 8.4.4
-  GHC == 8.6.2
+  GHC == 8.6.5
+  GHC == 8.8.3
+  GHC == 8.10.1
 
 flag debug
   default: False
@@ -40,7 +40,7 @@ library
     Codec.Compression.LZMA.Internal.Constants
     Codec.Compression.LZMA.Internal.Types
   build-depends:
-      base >= 4.5 && < 4.14
+      base >= 4.10 && < 4.14
     , bytestring >= 0.10 && < 0.11
     , exceptions >= 0.6 && < 0.11
     , mtl >= 2.2 && < 2.3
