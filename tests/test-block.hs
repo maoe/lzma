@@ -32,6 +32,6 @@ case_test1 = do
   blockCheck block $= CheckNone
   do
     ret <- calculateBlockHeaderSize block
-    assertEqual "calculateBlockHeaderSize 1" ret (Error ProgError)
+    assertEqual "calculateBlockHeaderSize 1" (Error ProgError) ret
 
   return ()
