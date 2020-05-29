@@ -207,6 +207,9 @@ import qualified Text.Show.Pretty as Pretty
 -- it wants. They are updated by liblzma to match the amount of data read and
 -- written but aren't used for anything else except as a possible return values
 -- from lzma_get_progress().
+--
+-- NOTE: 'Stream' objects aren't going to be GC'ed automatically. The user needs
+-- to call 'freeStream' at the end of the 'Stream''s life cycle.
 {# pointer *lzma_stream as Stream newtype #}
 
 deriving instance Show Stream
