@@ -609,10 +609,12 @@ finalizeStream skipBytes = do
 -----------------------------------------------------------
 -- Index decoder
 
+-- | Construct a combined index from a Handle, and return it along with the
+-- stream padding size.
 decodeIndex :: Handle -> IO (C.Index, C.VLI)
 decodeIndex h = do
-  size <- hFileSize h
-  runDecodeStream h $ decodeIndexIO (fromIntegral size)
+  fileSize <- hFileSize h
+  runDecodeStream h $ decodeIndexIO (fromIntegral fileSize)
 
 decodeIndexIO :: Size -> DecodeStream IO (C.Index, C.VLI)
 decodeIndexIO size = bracket acquire release $ \(stream, header, footer) ->
