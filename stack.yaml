@@ -1,0 +1,9 @@
+flags: {}
+packages:
+- '.'
+- location:
+    git: https://github.com/maoe/foreign-var.git
+    commit: 0b35fb686e3a4a78be95158e1d75df2676e1d27e
+  extra-dep: true
+extra-deps: []
+resolver: lts-8.9
