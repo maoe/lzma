@@ -746,8 +746,8 @@ parseStreamFooter = loop 0
         lift $ throwM $ DecodeError C.DataError
           "This file is too small to be a valid .xz file."
 
-      chunk@(S.PS inFPtr inOffset inLength) <-
-        pread (endPos - footerSize) footerSize
+      chunk <- pread (endPos - footerSize) footerSize
+      let S.PS inFPtr inOffset inLength = chunk
       assert (inOffset == 0 && inLength == footerSize) $ return ()
 
       if containsStreamPadding chunk
